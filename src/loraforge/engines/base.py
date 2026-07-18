@@ -12,10 +12,12 @@ a weekend job instead of a rewrite.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from loraforge.recipes.schema import Recipe
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from loraforge.recipes.schema import Recipe
 
 
 @dataclass(frozen=True)

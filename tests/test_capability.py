@@ -2,11 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from loraforge.capability.resolver import Availability, resolve
 from loraforge.probe import GpuArch, GpuInfo, HardwareReport, TorchInfo, arch_from_sm
 from loraforge.recipes.schema import Recipe
-
-import pytest
 
 
 def fake_report(
@@ -39,7 +39,9 @@ def fake_report(
 RTX_4060 = fake_report("NVIDIA GeForce RTX 4060", 8188, 7400, (8, 9))
 RTX_3060 = fake_report("NVIDIA GeForce RTX 3060", 12288, 11400, (8, 6))
 RTX_4090 = fake_report("NVIDIA GeForce RTX 4090", 24564, 23000, (8, 9))
-RTX_5090_OLD_WHEEL = fake_report("NVIDIA GeForce RTX 5090", 32607, 31000, (12, 0), torch_cuda="12.6")
+RTX_5090_OLD_WHEEL = fake_report(
+    "NVIDIA GeForce RTX 5090", 32607, 31000, (12, 0), torch_cuda="12.6"
+)
 
 
 def test_arch_mapping() -> None:

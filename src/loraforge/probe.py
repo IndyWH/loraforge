@@ -105,7 +105,7 @@ def _probe_nvml(report: HardwareReport) -> None:
         return
     try:
         pynvml.nvmlInit()
-    except Exception as exc:  # noqa: BLE001 — NVML raises its own error types
+    except Exception as exc:
         report.notes.append(f"NVML init failed (no NVIDIA driver?): {exc}")
         return
     try:
@@ -116,7 +116,7 @@ def _probe_nvml(report: HardwareReport) -> None:
             name = _nvml_str(pynvml.nvmlDeviceGetName(handle))
             try:
                 major, minor = pynvml.nvmlDeviceGetCudaComputeCapability(handle)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 major = minor = None
             gpu = GpuInfo(
                 index=i,

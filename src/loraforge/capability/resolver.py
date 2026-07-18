@@ -81,7 +81,10 @@ def resolve(report: HardwareReport, matrix: dict[str, Any] | None = None) -> Cap
                 )
                 for key, spec in matrix["models"].items()
             ],
-            warnings=["No NVIDIA GPU detected." + (" Notes: " + "; ".join(report.notes) if report.notes else "")],
+            warnings=[
+                "No NVIDIA GPU detected."
+                + (" Notes: " + "; ".join(report.notes) if report.notes else "")
+            ],
         )
 
     # Environment gate: Blackwell silicon on a pre-cu128 torch wheel can't run at all.
@@ -105,7 +108,8 @@ def resolve(report: HardwareReport, matrix: dict[str, Any] | None = None) -> Cap
             "desktop card of the same name. Conservative presets selected."
         )
 
-    fp8_ok = _arch_at_least(gpu.arch, matrix.get("features", {}).get("fp8_base", {}).get("min_arch", "ada"))
+    fp8_floor = matrix.get("features", {}).get("fp8_base", {}).get("min_arch", "ada")
+    fp8_ok = _arch_at_least(gpu.arch, fp8_floor)
     # Laptop thermal/VRAM headroom: demand ~10% extra margin before green-lighting a preset.
     vram_budget = int(gpu.vram_free_mb * (0.9 if gpu.is_laptop else 1.0))
 
@@ -151,7 +155,8 @@ def resolve(report: HardwareReport, matrix: dict[str, Any] | None = None) -> Cap
                     status=Availability.UNAVAILABLE,
                     reason=(
                         f"{spec['not_available_reason']} "
-                        f"(needs ≥{need_gb:.1f}GB free; {gpu.name} has {gpu.vram_free_mb / 1024:.1f}GB free)"
+                        f"(needs ≥{need_gb:.1f}GB free; {gpu.name} has "
+                        f"{gpu.vram_free_mb / 1024:.1f}GB free)"
                     ),
                 )
             )
