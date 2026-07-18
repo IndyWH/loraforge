@@ -1,0 +1,222 @@
+"""Server tests: thin routes over injected fakes, WS streams, loopback guard.
+
+Everything runs through the ASGI test client — no sockets, no GPU, no
+network. The runner gets the fake adapter/process from the job runner tests;
+the downloader gets the fake hub from the downloader tests.
+"""
+
+import asyncio
+
+import pytest
+from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
+from test_capability import fake_report
+from test_downloader import make_downloader
+from test_job_runner import FakeAdapter, FakeProcess, FakeSpawner, make_recipe
+
+from loraforge.jobs.runner import JobRunner
+from loraforge.server.app import ServerDeps, create_app
+from loraforge.server.downloads import DownloadManager
+from loraforge.server.run import ensure_local_bind
+
+RTX_3060 = fake_report("NVIDIA GeForce RTX 3060", 12288, 11400, (8, 6))
+
+
+def make_client(tmp_path, procs=()) -> tuple[TestClient, ServerDeps]:
+    downloader, _hub = make_downloader(tmp_path)
+    deps = ServerDeps(
+        runner=JobRunner(FakeAdapter(), tmp_path / "jobs", spawn=FakeSpawner(*procs)),
+        downloads=DownloadManager(downloader),
+        recipes_dir=tmp_path / "recipes",
+        jobs_root=tmp_path / "jobs",
+        probe=lambda: RTX_3060,
+    )
+    return TestClient(create_app(deps)), deps
+
+
+def recipe_json(tmp_path, **overrides) -> dict:
+    return make_recipe(tmp_path, **overrides).model_dump(mode="json")
+
+
+def drain_ws(ws) -> list[dict]:
+    """Receive until the terminal state event the stream guarantees."""
+    events = []
+    while True:
+        event = ws.receive_json()
+        events.append(event)
+        if event["kind"] == "state" and event["state"] in ("completed", "failed", "cancelled"):
+            return events
+
+
+class HangingProcess:
+    """Runs forever until terminated — pins the worker deterministically."""
+
+    def __init__(self) -> None:
+        self._released = asyncio.Event()
+        self._rc: int | None = None
+        self.terminated = False
+
+    @property
+    def returncode(self) -> int | None:
+        return self._rc
+
+    async def next_line(self) -> str | None:
+        if not self.terminated:
+            await self._released.wait()
+        return None
+
+    async def wait(self) -> int:
+        self._rc = -15
+        return self._rc
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self._released.set()
+
+    kill = terminate
+
+
+# ── Diagnose and models ──────────────────────────────────────────────────────
+
+
+def test_diagnose_returns_hardware_and_capabilities(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        data = client.get("/diagnose").json()
+    assert data["hardware"]["gpus"][0]["name"] == "NVIDIA GeForce RTX 3060"
+    verdicts = {m["model_key"]: m for m in data["capabilities"]["models"]}
+    assert verdicts["sdxl"]["status"] == "available"
+    assert verdicts["sdxl"]["preset_name"] is not None
+
+
+def test_models_merges_capability_with_download_state(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        entries = client.get("/models").json()
+    by_key = {e["capability"]["model_key"]: e for e in entries}
+    assert by_key["sdxl"]["download_state"] == "not_downloaded"
+    assert by_key["sdxl"]["capability"]["status"] == "available"
+
+    with client:
+        assert client.post("/models/nonsense/download").status_code == 404
+
+
+def test_download_flow_streams_events_and_updates_state(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        started = client.post("/models/sdxl/download")
+        assert started.status_code == 202
+        assert started.json()["started"] is True
+        with client.websocket_connect("/models/sdxl/events") as ws:
+            events = []
+            while True:
+                event = ws.receive_json()
+                events.append(event)
+                if event["state"] in ("completed", "failed"):
+                    break
+        assert events[0]["state"] == "checking"
+        assert events[-1]["state"] == "completed"
+        assert events[-1]["result"]["model_path"].endswith("sd_xl_base_1.0.safetensors")
+        by_key = {e["capability"]["model_key"]: e for e in client.get("/models").json()}
+        assert by_key["sdxl"]["download_state"] == "downloaded"
+        # idempotent restart
+        assert client.post("/models/sdxl/download").json()["started"] is False
+
+
+# ── Recipes ──────────────────────────────────────────────────────────────────
+
+
+def test_validate_returns_human_errors_verbatim(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    bad_resolution = recipe_json(tmp_path)
+    bad_resolution["dataset"]["resolution"] = 1000
+    # cross-field checks only run on field-valid documents, so probe them separately
+    bad_prompts = recipe_json(tmp_path)
+    bad_prompts["train"]["sample_every_steps"] = 100
+    bad_prompts["train"]["sample_prompts"] = []
+    with client:
+        result = client.post("/recipes/validate", json=bad_resolution).json()
+        assert result["valid"] is False
+        assert any("multiple of 64" in e for e in result["errors"])  # the actionable words
+        result = client.post("/recipes/validate", json=bad_prompts).json()
+        assert result["valid"] is False
+        assert any("sample_prompts" in e for e in result["errors"])
+        assert client.post("/recipes/validate", json=recipe_json(tmp_path)).json() == {
+            "valid": True,
+            "errors": [],
+        }
+
+
+def test_recipe_crud_roundtrip(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        assert client.get("/recipes").json() == []
+        put = client.put("/recipes/tuxedo-cat", json=recipe_json(tmp_path))
+        assert put.status_code == 200
+        assert client.get("/recipes").json() == ["tuxedo-cat"]
+        fetched = client.get("/recipes/tuxedo-cat").json()
+        assert fetched["name"] == "test-run"
+        assert client.delete("/recipes/tuxedo-cat").status_code == 204
+        assert client.get("/recipes/tuxedo-cat").status_code == 404
+        # names are constrained: no traversal, no separators
+        assert client.get("/recipes/bad%20name").status_code == 400
+
+
+# ── Jobs ─────────────────────────────────────────────────────────────────────
+
+
+def test_job_ws_delivers_replay_and_terminal(tmp_path) -> None:
+    client, _ = make_client(tmp_path, procs=[FakeProcess(["step 1/2\n", "step 2/2\n"])])
+    with client:
+        job = client.post("/jobs", json=recipe_json(tmp_path)).json()
+        assert job["state"] in ("queued", "preparing", "running", "completed")
+
+        with client.websocket_connect(f"/jobs/{job['id']}/events") as ws:
+            events = drain_ws(ws)
+        states = [e["state"] for e in events if e["kind"] == "state"]
+        assert states == ["queued", "preparing", "running", "completed"]
+        assert [e["progress"]["step"] for e in events if e["kind"] == "progress"] == [1, 2]
+
+        # late subscriber: full replay again, still ends terminally
+        with client.websocket_connect(f"/jobs/{job['id']}/events") as ws:
+            replay = drain_ws(ws)
+        assert [e["state"] for e in replay if e["kind"] == "state"] == states
+
+        record = client.get(f"/jobs/{job['id']}").json()
+        assert record["state"] == "completed"
+        assert client.get("/jobs").json()[0]["id"] == job["id"]
+
+
+def test_cancel_from_queued_via_http(tmp_path) -> None:
+    hanging = HangingProcess()
+    client, _ = make_client(tmp_path, procs=[hanging])
+    with client:
+        first = client.post("/jobs", json=recipe_json(tmp_path)).json()
+        second = client.post("/jobs", json=recipe_json(tmp_path)).json()
+
+        cancelled = client.post(f"/jobs/{second['id']}/cancel").json()
+        assert cancelled["state"] == "cancelled"
+        states = [s["state"] for s in cancelled["state_history"]]
+        assert states == ["queued", "cancelled"]  # never prepared, never spawned
+
+        client.post(f"/jobs/{first['id']}/cancel")  # release the hanging worker
+        with client.websocket_connect(f"/jobs/{first['id']}/events") as ws:
+            assert drain_ws(ws)[-1]["state"] == "cancelled"
+    assert hanging.terminated
+
+    with client.websocket_connect("/jobs/nope/events") as ws, pytest.raises(WebSocketDisconnect):
+        ws.receive_json()  # server accepted, then closed 4004: unknown job
+
+
+# ── Bind policy ──────────────────────────────────────────────────────────────
+
+
+def test_refuses_non_loopback_bind_without_override() -> None:
+    ensure_local_bind("127.0.0.1")
+    ensure_local_bind("localhost")
+    ensure_local_bind("::1")
+    with pytest.raises(SystemExit, match="allow-remote"):
+        ensure_local_bind("0.0.0.0")
+    with pytest.raises(SystemExit, match="no authentication"):
+        ensure_local_bind("192.168.1.20")
+    ensure_local_bind("0.0.0.0", allow_remote=True)  # explicit override is honored

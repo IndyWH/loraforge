@@ -118,18 +118,22 @@ Done and tested (18 tests, ruff clean, CI on Ubuntu+Windows):
   preflight, gated-401 message with license URL + `hf auth login` step
   (tokens live only in HF's own store), typed events with terminal
   guarantee, adapter_paths() → KohyaAdapter wiring. huggingface_hub 1.x.
+- `server/` — thin FastAPI wrapper (routes translate, never decide):
+  /diagnose, /models (+download POST, WS events), /recipes CRUD+validate
+  (human errors verbatim), /jobs (submit/list/get/cancel, WS events
+  wrapping runner.events()). Loopback-only bind unless --allow-remote
+  (run.ensure_local_bind). DI via ServerDeps; real wiring in
+  run.build_default_deps(). CLI: `loraforge serve`.
 
 ## Roadmap (in order — don't skip ahead)
 
-1. **FastAPI server** — routes: diagnose, models, recipes CRUD+validate,
-   jobs (start/status/cancel), artifacts. The UI talks only to this.
-2. **Dataset prep** — ingestion, dedup, bucketing prep, auto-captioning
+1. **Dataset prep** — ingestion, dedup, bucketing prep, auto-captioning
    (Florence-2 / WD14 as optional models), caption editor backend,
    trigger-word injection.
-3. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
+2. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
    (model, dataset, go) with preset applied silently; advanced pane
    pre-filled with preset values.
-4. Later: musubi-tuner adapter (video), LoRA format converters, sample
+3. Later: musubi-tuner adapter (video), LoRA format converters, sample
    gallery, community recipe sharing.
 
 Nightly ambition once hardware CI exists (self-hosted runner on a real GPU):

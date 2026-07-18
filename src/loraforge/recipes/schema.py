@@ -15,7 +15,21 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+
+
+def validation_messages(exc: ValidationError) -> list[str]:
+    """Flatten a ValidationError into our human-worded messages, verbatim.
+
+    Strips pydantic's "Value error, " framing so what the validators said is
+    exactly what the user reads, prefixed with the dotted field path.
+    """
+    messages: list[str] = []
+    for error in exc.errors():
+        loc = ".".join(str(part) for part in error["loc"])
+        msg = error["msg"].removeprefix("Value error, ").removeprefix("Assertion failed, ")
+        messages.append(f"{loc}: {msg}" if loc else msg)
+    return messages
 
 
 class PeftSection(BaseModel):

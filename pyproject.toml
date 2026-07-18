@@ -46,6 +46,10 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "PTH", "RUF"]
 
+[tool.ruff.lint.flake8-type-checking]
+# pydantic models need their field types at runtime; don't move them to TYPE_CHECKING
+runtime-evaluated-base-classes = ["pydantic.BaseModel"]
+
 [tool.mypy]
 strict = true
 python_version = "3.12"

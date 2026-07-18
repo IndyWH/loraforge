@@ -191,13 +191,9 @@ class ModelDownloader:
             )
 
         emit(DownloadState.CHECKING, message=f"Checking local caches for {source.display_name}…")
-        items = [
-            ("base", source.repo, source.file),
-            *((name, asset.repo, asset.file) for name, asset in source.assets.items()),
-        ]
         paths: dict[str, Path] = {}
         missing: list[tuple[str, str, str]] = []
-        for name, repo, filename in items:
+        for name, repo, filename in self._items(source):
             cached = self._cached(repo, filename)
             if cached is None:
                 missing.append((name, repo, filename))
@@ -231,7 +227,33 @@ class ModelDownloader:
         )
         return result
 
+    def peek(self, model_key: str) -> DownloadedModel | None:
+        """Already-local paths for a model, without downloading anything.
+
+        None if the model is unknown or any of its files is not yet cached.
+        """
+        source = self.sources.get(model_key)
+        if source is None:
+            return None
+        paths: dict[str, Path] = {}
+        for name, repo, filename in self._items(source):
+            cached = self._cached(repo, filename)
+            if cached is None:
+                return None
+            paths[name] = cached
+        return DownloadedModel(
+            model_key=model_key, model_path=paths.pop("base"), asset_paths=paths
+        )
+
     # ── Internals ────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _items(source: ModelSource) -> list[tuple[str, str, str]]:
+        """(name, repo, filename) for the base checkpoint and every asset."""
+        return [
+            ("base", source.repo, source.file),
+            *((name, asset.repo, asset.file) for name, asset in source.assets.items()),
+        ]
 
     def _cached(self, repo: str, filename: str) -> Path | None:
         """The file's path if it is already in the cache (ours or ComfyUI's)."""

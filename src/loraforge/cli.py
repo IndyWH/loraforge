@@ -36,10 +36,24 @@ def main(argv: list[str] | None = None) -> int:
     setup.add_argument(
         "--dry-run", action="store_true", help="show what setup would do without doing it"
     )
+    server = sub.add_parser("serve", help="run the local API server (loopback only by default)")
+    server.add_argument("--host", default="127.0.0.1")
+    server.add_argument("--port", type=int, default=8471)
+    server.add_argument(
+        "--allow-remote",
+        action="store_true",
+        help="bind beyond loopback — exposes an unauthenticated training server; "
+        "only with your own auth in front",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "setup":
         return _cmd_setup(args)
+    if args.command == "serve":
+        from loraforge.server.run import serve  # server deps stay off diagnose's import path
+
+        serve(host=args.host, port=args.port, allow_remote=args.allow_remote)
+        return 0
 
     report = probe()
     caps = resolve(report)

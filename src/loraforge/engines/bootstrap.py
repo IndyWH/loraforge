@@ -113,12 +113,17 @@ def engine_paths(spec: EngineSpec, engines_root: Path) -> EnginePaths:
     )
 
 
-def default_engines_root() -> Path:
+def default_data_root() -> Path:
+    """Per-user app data dir: engines, jobs, recipes all live under here."""
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
-        return base / "LoRAForge" / "engines"
+        return base / "LoRAForge"
     base = Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local" / "share")))
-    return base / "loraforge" / "engines"
+    return base / "loraforge"
+
+
+def default_engines_root() -> Path:
+    return default_data_root() / "engines"
 
 
 # ── Plan / execute ───────────────────────────────────────────────────────────
