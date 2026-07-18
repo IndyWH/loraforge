@@ -76,4 +76,7 @@ def serve(
     ensure_local_bind(host, allow_remote)
     import uvicorn
 
-    uvicorn.run(create_app(deps or build_default_deps()), host=host, port=port)
+    # Under --allow-remote the Host/Origin checks come off too: the operator
+    # fronts their own auth/proxy, and remote Hosts are then legitimate.
+    app = create_app(deps or build_default_deps(), local_only=not allow_remote)
+    uvicorn.run(app, host=host, port=port)

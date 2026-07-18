@@ -31,11 +31,18 @@ def make_client(tmp_path, procs=()) -> tuple[TestClient, ServerDeps]:
         jobs_root=tmp_path / "jobs",
         probe=lambda: RTX_3060,
     )
-    return TestClient(create_app(deps)), deps
+    # loopback base_url: the security middleware rejects non-loopback Hosts
+    return TestClient(create_app(deps), base_url="http://127.0.0.1:8471"), deps
 
 
 def recipe_json(tmp_path, **overrides) -> dict:
     return make_recipe(tmp_path, **overrides).model_dump(mode="json")
+
+
+def ws_connect(client: TestClient, path: str):
+    # the testclient stamps Host: testserver on WS upgrades; the security
+    # middleware (rightly) refuses that, so pin a loopback Host explicitly
+    return client.websocket_connect(path, headers={"host": "127.0.0.1:8471"})
 
 
 def drain_ws(ws) -> list[dict]:
@@ -107,7 +114,7 @@ def test_download_flow_streams_events_and_updates_state(tmp_path) -> None:
         started = client.post("/models/sdxl/download")
         assert started.status_code == 202
         assert started.json()["started"] is True
-        with client.websocket_connect("/models/sdxl/events") as ws:
+        with ws_connect(client, "/models/sdxl/events") as ws:
             events = []
             while True:
                 event = ws.receive_json()
@@ -171,14 +178,14 @@ def test_job_ws_delivers_replay_and_terminal(tmp_path) -> None:
         job = client.post("/jobs", json=recipe_json(tmp_path)).json()
         assert job["state"] in ("queued", "preparing", "running", "completed")
 
-        with client.websocket_connect(f"/jobs/{job['id']}/events") as ws:
+        with ws_connect(client, f"/jobs/{job['id']}/events") as ws:
             events = drain_ws(ws)
         states = [e["state"] for e in events if e["kind"] == "state"]
         assert states == ["queued", "preparing", "running", "completed"]
         assert [e["progress"]["step"] for e in events if e["kind"] == "progress"] == [1, 2]
 
         # late subscriber: full replay again, still ends terminally
-        with client.websocket_connect(f"/jobs/{job['id']}/events") as ws:
+        with ws_connect(client, f"/jobs/{job['id']}/events") as ws:
             replay = drain_ws(ws)
         assert [e["state"] for e in replay if e["kind"] == "state"] == states
 
@@ -200,12 +207,74 @@ def test_cancel_from_queued_via_http(tmp_path) -> None:
         assert states == ["queued", "cancelled"]  # never prepared, never spawned
 
         client.post(f"/jobs/{first['id']}/cancel")  # release the hanging worker
-        with client.websocket_connect(f"/jobs/{first['id']}/events") as ws:
+        with ws_connect(client, f"/jobs/{first['id']}/events") as ws:
             assert drain_ws(ws)[-1]["state"] == "cancelled"
     assert hanging.terminated
 
-    with client.websocket_connect("/jobs/nope/events") as ws, pytest.raises(WebSocketDisconnect):
+    with ws_connect(client, "/jobs/nope/events") as ws, pytest.raises(WebSocketDisconnect):
         ws.receive_json()  # server accepted, then closed 4004: unknown job
+
+
+# ── Artifact ─────────────────────────────────────────────────────────────────
+
+
+def test_job_artifact_404_until_present_then_served(tmp_path) -> None:
+    from pathlib import Path
+
+    client, _ = make_client(tmp_path, procs=[FakeProcess(["step 1/1\n"])])
+    with client:
+        job = client.post("/jobs", json=recipe_json(tmp_path)).json()
+        with ws_connect(client, f"/jobs/{job['id']}/events") as ws:
+            drain_ws(ws)  # wait for completion
+        record = client.get(f"/jobs/{job['id']}").json()
+        assert record["artifact"] is not None
+        # record points at the artifact, but the fake engine wrote no file yet
+        assert client.get(f"/jobs/{job['id']}/artifact").status_code == 404
+
+        Path(record["artifact"]).write_bytes(b"LORA-WEIGHTS")
+        served = client.get(f"/jobs/{job['id']}/artifact")
+        assert served.status_code == 200
+        assert served.content == b"LORA-WEIGHTS"
+
+        assert client.get("/jobs/nope/artifact").status_code == 404
+
+
+# ── Hostile-browser defenses ─────────────────────────────────────────────────
+
+
+def test_dns_rebinding_host_is_refused(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    with client:
+        rebound = client.get("/models", headers={"Host": "evil.example"})
+        assert rebound.status_code == 403
+        assert "loopback" in rebound.text
+        # loopback Hosts in any spelling keep working
+        assert client.get("/models", headers={"Host": "localhost:8471"}).status_code == 200
+        assert client.get("/models", headers={"Host": "[::1]:8471"}).status_code == 200
+
+
+def test_cross_origin_writes_refused_plain_and_local_allowed(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    good = recipe_json(tmp_path)
+    with client:
+        # no Origin header (curl, Tauri shell): works
+        assert client.post("/recipes/validate", json=good).status_code == 200
+        # loopback and Tauri origins: work
+        for origin in ("http://127.0.0.1:8471", "http://localhost:5173", "tauri://localhost"):
+            response = client.post(
+                "/recipes/validate", json=good, headers={"Origin": origin}
+            )
+            assert response.status_code == 200, origin
+        # foreign origin on a state-changing request: refused
+        evil = client.post(
+            "/recipes/validate", json=good, headers={"Origin": "https://evil.example"}
+        )
+        assert evil.status_code == 403
+        assert "cross-origin" in evil.text
+        # foreign origin on a read: allowed (the browser's SOP guards the response)
+        assert (
+            client.get("/models", headers={"Origin": "https://evil.example"}).status_code == 200
+        )
 
 
 # ── Bind policy ──────────────────────────────────────────────────────────────

@@ -16,9 +16,11 @@ import json
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from loraforge.capability.resolver import resolve
@@ -29,10 +31,10 @@ from loraforge.server.schemas import (
     ModelStatus,
     ValidateResponse,
 )
+from loraforge.server.security import LocalRequestsOnly
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
-    from pathlib import Path
 
     from loraforge.jobs.runner import JobRunner
     from loraforge.probe import HardwareReport
@@ -59,7 +61,7 @@ def _payload(event: Any) -> dict[str, Any]:
     return json.loads(json.dumps(dataclasses.asdict(event), default=str))
 
 
-def create_app(deps: ServerDeps) -> FastAPI:
+def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         deps.recipes_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +71,8 @@ def create_app(deps: ServerDeps) -> FastAPI:
 
     app = FastAPI(title="LoRAForge", lifespan=lifespan)
     app.state.deps = deps
+    if local_only:  # off only under --allow-remote, where the user fronts their own auth
+        app.add_middleware(LocalRequestsOnly)
 
     # ── Diagnostics ──────────────────────────────────────────────────────────
 
@@ -175,6 +179,17 @@ def create_app(deps: ServerDeps) -> FastAPI:
     @app.get("/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
         return job_record(job_id)
+
+    @app.get("/jobs/{job_id}/artifact")
+    def job_artifact(job_id: str) -> FileResponse:
+        artifact = job_record(job_id).get("artifact")
+        if not artifact or not Path(artifact).exists():
+            raise HTTPException(
+                404, "no artifact yet — it appears once the job completes successfully"
+            )
+        return FileResponse(
+            artifact, filename=Path(artifact).name, media_type="application/octet-stream"
+        )
 
     @app.post("/jobs/{job_id}/cancel")
     async def cancel_job(job_id: str) -> dict[str, Any]:
