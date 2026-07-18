@@ -14,12 +14,14 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import shutil
+import tempfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
@@ -205,6 +207,24 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc)) from exc
 
+    @app.post("/datasets/{name}/upload", response_model=IngestResult)
+    async def upload_images(name: str, files: list[UploadFile]) -> IngestResult:
+        """Browser uploads: spool multipart files to disk, then the exact same
+        ingest pipeline (and verdicts) as path-based ingestion."""
+        dataset_name(name)
+        with tempfile.TemporaryDirectory(prefix="loraforge-upload-") as spool:
+            staged: list[Path] = []
+            for upload in files:
+                safe_name = Path(upload.filename or "unnamed").name  # strip any path parts
+                target = Path(spool) / safe_name
+                with target.open("wb") as sink:
+                    shutil.copyfileobj(upload.file, sink)
+                staged.append(target)
+            try:
+                return deps.datasets.ingest(name, staged)
+            except FileNotFoundError as exc:
+                raise HTTPException(404, str(exc)) from exc
+
     @app.get("/datasets/{name}/captions/{filename}", response_model=CaptionResponse)
     def get_caption(name: str, filename: str) -> CaptionResponse:
         try:
@@ -269,9 +289,9 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
         )
 
     @app.post("/jobs/{job_id}/cancel")
-    async def cancel_job(job_id: str) -> dict[str, Any]:
+    async def cancel_job(job_id: str, keep: bool = False) -> dict[str, Any]:
         try:
-            await deps.runner.cancel(job_id)
+            await deps.runner.cancel(job_id, keep=keep)
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from exc
         return job_record(job_id)

@@ -31,6 +31,8 @@ dependencies = [
     "huggingface_hub>=1.0",  # 1.x: httpx-based errors, `hf` CLI — downloader relies on both
     "psutil>=5.9",
     "pillow>=10",           # dataset prep: hashing + quality checks; NOT torch — engines own torch
+    "pillow-heif>=0.16",    # iPhone HEIC photos ingest like any other image
+    "python-multipart>=0.0.9",  # FastAPI multipart parsing for browser uploads
     "nvidia-ml-py>=12.0",   # official pynvml bindings; probe degrades gracefully without a GPU
 ]
 

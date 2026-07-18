@@ -48,13 +48,16 @@ def ws_connect(client: TestClient, path: str):
     return client.websocket_connect(path, headers={"host": "127.0.0.1:8471"})
 
 
+_TERMINAL = ("completed", "completed_early", "failed", "cancelled")
+
+
 def drain_ws(ws) -> list[dict]:
     """Receive until the terminal state event the stream guarantees."""
     events = []
     while True:
         event = ws.receive_json()
         events.append(event)
-        if event["kind"] == "state" and event["state"] in ("completed", "failed", "cancelled"):
+        if event["kind"] == "state" and event["state"] in _TERMINAL:
             return events
 
 
@@ -258,6 +261,49 @@ def test_cancel_from_queued_via_http(tmp_path) -> None:
 
     with ws_connect(client, "/jobs/nope/events") as ws, pytest.raises(WebSocketDisconnect):
         ws.receive_json()  # server accepted, then closed 4004: unknown job
+
+
+def test_multipart_upload_reuses_ingest_verdicts(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    photo = fake_photo(tmp_path / "src" / "cat.png", seed=5)
+    other = fake_photo(tmp_path / "src" / "other.png", seed=6)
+    with client:
+        client.post("/datasets", json={"name": "cats"})
+        files = [
+            ("files", ("cat.png", photo.read_bytes(), "image/png")),
+            ("files", ("cat-again.png", photo.read_bytes(), "image/png")),  # same bytes
+            ("files", ("notes.jpg", b"not an image", "image/jpeg")),
+            ("files", ("../sneaky.png", other.read_bytes(), "image/png")),  # path in name
+        ]
+        result = client.post("/datasets/cats/upload", files=files).json()
+        assert result["added"] == ["cat.png", "sneaky.png"]  # traversal stripped to basename
+        reasons = " | ".join(s["reason"] for s in result["skipped"])
+        assert "exact duplicate" in reasons and "corrupted" in reasons
+
+        summary = client.get("/datasets/cats").json()
+        assert summary["included"] == 2
+        assert client.post("/datasets/nope/upload", files=files[:1]).status_code == 404
+
+
+def test_cancel_with_keep_finishes_completed_early(tmp_path) -> None:
+    client, _ = make_client(
+        tmp_path, procs=[HangingProcess()]
+    )
+    with client:
+        job = client.post("/jobs", json=recipe_json(tmp_path)).json()
+        with ws_connect(client, f"/jobs/{job['id']}/events") as ws:
+            while True:  # wait until it is actually running
+                if ws.receive_json().get("state") == "running":
+                    break
+            assert client.post(f"/jobs/{job['id']}/cancel?keep=true").status_code == 200
+            while True:  # the worker finishes the transition asynchronously
+                event = ws.receive_json()
+                if event["kind"] == "state" and event["state"] in _TERMINAL:
+                    break
+        assert event["state"] == "completed_early"
+        record = client.get(f"/jobs/{job['id']}").json()
+        assert record["state"] == "completed_early"
+        assert record["artifact"].endswith("lora.safetensors")
 
 
 # ── Artifact ─────────────────────────────────────────────────────────────────

@@ -266,6 +266,55 @@ def test_cancel_while_queued_never_launches(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
 
+def test_stop_and_keep_collects_newest_checkpoint(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        adapter = FakeAdapter()
+        proc = FakeProcess([f"step {i}/100\n" for i in range(1, 100)])
+        runner = JobRunner(adapter, tmp_path, spawn=FakeSpawner(proc))
+        job = await runner.submit(make_recipe(tmp_path))
+
+        events = []
+        async for event in runner.events(job.id):
+            events.append(event)
+            if event.kind == "progress" and event.progress.step == 3:
+                await runner.cancel(job.id, keep=True)
+        await runner.close()
+
+        assert job.state is JobState.COMPLETED_EARLY
+        assert proc.terminated  # the process was still stopped
+        assert job.artifact is not None and job.artifact.name == "lora.safetensors"
+        terminal = events[-1]
+        assert terminal.is_terminal and "kept the latest saved LoRA" in terminal.message
+        record = record_of(runner, job.id)
+        assert record["state"] == "completed_early"
+        assert record["artifact"].endswith("lora.safetensors")
+
+    asyncio.run(scenario())
+
+
+def test_stop_and_keep_without_checkpoint_falls_back_to_cancelled(tmp_path: Path) -> None:
+    class NoArtifactAdapter(FakeAdapter):
+        def collect(self, workdir: Path):
+            raise FileNotFoundError("no .safetensors artifact")
+
+    async def scenario() -> None:
+        runner = JobRunner(
+            NoArtifactAdapter(),
+            tmp_path,
+            spawn=FakeSpawner(FakeProcess([f"step {i}/100\n" for i in range(1, 100)])),
+        )
+        job = await runner.submit(make_recipe(tmp_path))
+        async for event in runner.events(job.id):
+            if event.kind == "progress" and event.progress.step == 2:
+                await runner.cancel(job.id, keep=True)
+        await runner.close()
+
+        assert job.state is JobState.CANCELLED
+        assert "nothing to keep" in record_of(runner, job.id)["state_history"][-1]["message"]
+
+    asyncio.run(scenario())
+
+
 # ── Other failure paths ──────────────────────────────────────────────────────
 
 

@@ -80,6 +80,20 @@ def test_ingest_rejects_junk_with_human_reasons(
     assert reasons["nope.png"] == "file not found"
 
 
+def test_ingest_transcodes_heic_for_engine_compatibility(
+    library: DatasetLibrary, tmp_path: Path
+) -> None:
+    heic = fake_photo(tmp_path / "src" / "IMG_0042.heic", seed=7)
+    result = library.ingest("cats", [heic])
+    assert result.added == ["IMG_0042.jpg"]  # kohya can't read HEIC → stored as JPEG
+    assert heic.exists()  # original untouched
+    entry = library.status("cats").images[0]
+    assert entry.included and (entry.width, entry.height) == (640, 640)
+
+    again = library.ingest("cats", [heic])  # same photo again → same JPEG bytes → dup
+    assert again.added == [] and "duplicate" in again.skipped[0].reason
+
+
 def test_ingest_brings_existing_caption_sidecars(
     library: DatasetLibrary, tmp_path: Path
 ) -> None:

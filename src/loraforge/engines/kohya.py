@@ -146,6 +146,8 @@ class KohyaAdapter:
             argv.append("--fp8_base")
         if recipe.train.blocks_to_swap > 0:
             argv.append(f"--blocks_to_swap={recipe.train.blocks_to_swap}")
+        if recipe.train.save_every_steps > 0:  # intermediate saves power stop-and-keep
+            argv.append(f"--save_every_n_steps={recipe.train.save_every_steps}")
         argv.append("--sdpa")  # cross-platform attention: never require flash/xformers
 
         if recipe.train.sample_every_steps > 0:

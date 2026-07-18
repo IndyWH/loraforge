@@ -70,6 +70,9 @@ class TrainSection(BaseModel):
     fp8_base: bool = False  # resolver flips this on for Ada/Blackwell presets
     blocks_to_swap: int = Field(0, ge=0, le=57, description="kohya block swap (VRAM↓, RAM↑)")
     seed: int = 42
+    save_every_steps: int = Field(
+        200, ge=0, description="Intermediate checkpoint cadence; powers stop-and-keep. 0 disables"
+    )
     sample_every_steps: int = Field(200, ge=0, description="0 disables preview samples")
     sample_prompts: list[str] = Field(default_factory=list)
 

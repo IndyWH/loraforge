@@ -56,11 +56,14 @@ class JobState(StrEnum):
     RUNNING = "running"
     OOM_STEPDOWN = "oom_stepdown"  # transient: tighter recipe chosen, loops to preparing
     COMPLETED = "completed"
+    COMPLETED_EARLY = "completed_early"  # stop-and-keep: user stopped, newest checkpoint kept
     FAILED = "failed"
     CANCELLED = "cancelled"
 
 
-TERMINAL_STATES = frozenset({JobState.COMPLETED, JobState.FAILED, JobState.CANCELLED})
+TERMINAL_STATES = frozenset(
+    {JobState.COMPLETED, JobState.COMPLETED_EARLY, JobState.FAILED, JobState.CANCELLED}
+)
 
 
 @dataclass(frozen=True)
@@ -90,6 +93,7 @@ class Job:
     artifact: Path | None = None
     error: str | None = None
     cancel_requested: bool = False
+    keep_requested: bool = False  # stop-and-keep: collect the newest checkpoint on stop
     history: list[JobEvent] = field(default_factory=list, repr=False)
     subscribers: list[asyncio.Queue[JobEvent]] = field(default_factory=list, repr=False)
     proc: Any = field(default=None, repr=False)  # live process handle while running
@@ -212,12 +216,16 @@ class JobRunner:
             self._worker = asyncio.create_task(self._work())
         return job
 
-    async def cancel(self, job_id: str) -> None:
+    async def cancel(self, job_id: str, keep: bool = False) -> None:
+        """Stop a job. With ``keep=True``, the newest saved checkpoint is
+        collected and the job finishes as ``completed_early`` instead of
+        ``cancelled`` (falls back to cancelled if nothing was saved yet)."""
         job = self.get(job_id)
         if job.state in TERMINAL_STATES:
             return
+        job.keep_requested = keep
         job.cancel_requested = True
-        if job.state is JobState.QUEUED:
+        if job.state is JobState.QUEUED:  # nothing ran, so nothing to keep
             self._transition(job, JobState.CANCELLED, "Cancelled before training started.")
             return
         if job.proc is not None:  # unblock the worker's read loop
@@ -311,6 +319,24 @@ class JobRunner:
 
             if job.cancel_requested:
                 await self._stop(proc)
+                if job.keep_requested:
+                    try:
+                        result = self.adapter.collect(job.workdir)
+                    except FileNotFoundError:
+                        self._transition(
+                            job,
+                            JobState.CANCELLED,
+                            "Training stopped — no checkpoint had been saved yet, "
+                            "so there was nothing to keep.",
+                        )
+                        return
+                    job.artifact = result.artifact
+                    self._transition(
+                        job,
+                        JobState.COMPLETED_EARLY,
+                        f"Training stopped early — kept the latest saved LoRA: {result.artifact}",
+                    )
+                    return
                 self._transition(job, JobState.CANCELLED, "Training cancelled.")
                 return
 
