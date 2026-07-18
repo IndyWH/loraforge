@@ -4,6 +4,25 @@ import { Step } from "../App";
 import { api } from "../api";
 import type { DownloadEventMsg, ModelStatus } from "../api";
 
+// Gated-model failures carry the license-acceptance URL (docs/decisions.md
+// §12 promises a clickable link, not a string to retype).
+function Linkified({ text }: { text: string }) {
+  const parts = text.split(/(https?:\/\/[^\s)]+)/g);
+  return (
+    <>
+      {parts.map((part, index) =>
+        /^https?:\/\//.test(part) ? (
+          <a key={index} href={part} target="_blank" rel="noreferrer">
+            {part}
+          </a>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  );
+}
+
 export function ModelSection(props: {
   unlocked: boolean;
   models: ModelStatus[];
@@ -80,7 +99,7 @@ export function ModelSection(props: {
                   )}
                   {download_state === "failed" && (
                     <p className="why" style={{ color: "var(--err)" }}>
-                      {downloadNote[cap.model_key] || "download failed — see server log"}
+                      <Linkified text={downloadNote[cap.model_key] || "download failed — see server log"} />
                     </p>
                   )}
                 </>

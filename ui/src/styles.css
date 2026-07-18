@@ -211,6 +211,7 @@ details.advanced .inner { padding: 12px 14px; }
   white-space: pre-wrap;
   word-break: break-word;
 }
+a { color: var(--accent); }
 .errors { color: var(--err); font-size: 0.88rem; margin: 8px 0; }
 .errors li { margin: 2px 0; }
 a.download {
