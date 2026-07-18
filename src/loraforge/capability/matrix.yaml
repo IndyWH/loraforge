@@ -1,0 +1,75 @@
+# LoRAForge capability matrix — versioned DATA, not code.
+#
+# What fits on which card lives here so the community can extend it with PRs
+# ("FLUX at 512px works on my 3060 12GB with these settings") without touching
+# app logic. The resolver picks, for each model family, the best preset whose
+# constraints the probed hardware satisfies — or produces a human-readable
+# reason why nothing fits.
+#
+# vram numbers are the FREE VRAM required (MB), measured with the desktop
+# running, latents/text-embeds precached, SDPA attention. Conservative on
+# purpose: a preset that OOMs once costs more trust than 5% unused headroom.
+
+schema_version: 1
+
+features:
+  fp8_base:
+    min_arch: ada            # sm_89+; halves frozen-base memory on RTX 40/50
+  blackwell_wheels:
+    arch: blackwell          # sm_120 needs torch built for cu128+
+    min_torch_cuda: "12.8"
+
+models:
+  sdxl:
+    display_name: "Stable Diffusion XL"
+    hf_repo: stabilityai/stable-diffusion-xl-base-1.0
+    gated: false
+    download_gb: 7
+    engine: kohya
+    presets:
+      - name: comfortable
+        min_free_vram_mb: 15000
+        settings: {resolution: 1024, batch_size: 4, gradient_checkpointing: false}
+      - name: standard
+        min_free_vram_mb: 10500
+        settings: {resolution: 1024, batch_size: 2, gradient_checkpointing: true}
+      - name: tight
+        min_free_vram_mb: 7000
+        settings: {resolution: 768, batch_size: 1, gradient_checkpointing: true}
+    not_available_reason: "SDXL LoRA needs ~7GB free VRAM even at 768px."
+
+  flux_dev:
+    display_name: "FLUX.1-dev"
+    hf_repo: black-forest-labs/FLUX.1-dev
+    gated: true              # user must accept BFL license + provide HF token
+    download_gb: 35
+    engine: kohya
+    presets:
+      - name: comfortable
+        min_free_vram_mb: 22000
+        settings: {resolution: 1024, batch_size: 1, fp8_base: true, blocks_to_swap: 0}
+      - name: standard
+        min_free_vram_mb: 15000
+        settings: {resolution: 1024, batch_size: 1, fp8_base: true, blocks_to_swap: 18}
+      - name: tight
+        min_free_vram_mb: 11000
+        settings: {resolution: 512, batch_size: 1, fp8_base: true, blocks_to_swap: 34}
+        min_ram_mb: 32000    # aggressive block swap needs host RAM to swap into
+    not_available_reason: >-
+      FLUX LoRA needs ~11GB free VRAM (with fp8 base + block swap) and 32GB
+      RAM. SDXL is the best quality option for this card.
+
+  sd15:
+    display_name: "Stable Diffusion 1.5"
+    hf_repo: runwayml/stable-diffusion-v1-5
+    gated: false
+    download_gb: 4
+    engine: kohya
+    presets:
+      - name: standard
+        min_free_vram_mb: 5500
+        settings: {resolution: 512, batch_size: 4, gradient_checkpointing: false}
+      - name: tight
+        min_free_vram_mb: 3800
+        settings: {resolution: 512, batch_size: 1, gradient_checkpointing: true}
+    not_available_reason: "SD1.5 LoRA needs ~4GB free VRAM — very few cards fall below this."

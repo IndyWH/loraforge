@@ -1,0 +1,46 @@
+# Example shareable recipe: SDXL character LoRA sized for a 12GB card
+# (RTX 3060 12GB / 4070 / 5070 class). Produced by the "standard" preset;
+# everything here can be edited in the advanced pane or overridden via CLI:
+#
+#   loraforge train sdxl-character-12gb.yaml --peft.rank 32
+
+schema_version: 1
+name: sdxl-character-12gb
+model: sdxl
+engine: kohya
+
+peft:
+  rank: 16
+  alpha: 16
+  dropout: 0.0
+  target: attn+mlp
+
+optim:
+  learning_rate: 0.0001
+  optimizer: adamw8bit
+  lr_scheduler: cosine
+  warmup_steps: 100
+
+dataset:
+  path: ./datasets/my-character
+  caption_extension: .txt
+  trigger_word: ohwx person
+  repeats: 10
+  resolution: 1024
+  cache_latents: true
+
+train:
+  max_steps: 1500
+  batch_size: 2
+  gradient_checkpointing: true
+  mixed_precision: bf16
+  fp8_base: false
+  blocks_to_swap: 0
+  seed: 42
+  sample_every_steps: 200
+  sample_prompts:
+    - "photo of ohwx person, upper body, natural light"
+    - "ohwx person as a watercolor painting"
+
+output_dir: outputs/sdxl-character
+provenance: {}
