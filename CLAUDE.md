@@ -101,27 +101,28 @@ Done and tested (18 tests, ruff clean, CI on Ubuntu+Windows):
   check_environment); LaunchPlan/ProgressEvent/TrainResult dataclasses
 - `engines/kohya.py` — compile to accelerate argv + dataset TOML; tqdm/OOM
   parsing; artifact collection
-- `cli.py` — `loraforge diagnose` (also the bug-report generator, `--json`)
+- `cli.py` — `loraforge diagnose` (also the bug-report generator, `--json`);
+  `loraforge setup [--dry-run]` (engine bootstrap)
+- `engines/bootstrap.py` — plan-then-execute engine setup: pinned sd-scripts
+  clone (v0.9.1), uv venv on managed CPython, GPU-matched torch wheels
+  (cu126/cu128), state file for idempotence + repair
 
 ## Roadmap (in order — don't skip ahead)
 
-1. **Engine bootstrap** — code that clones kohya sd-scripts at a PINNED tag
-   into a managed dir, creates its uv venv, installs the right torch wheel
-   line for the probed GPU. Idempotent; powers `check_environment` repair.
-2. **Job runner** — subprocess launch from LaunchPlan, stream parse_line()
+1. **Job runner** — subprocess launch from LaunchPlan, stream parse_line()
    events, WebSocket progress, the OOM step-down retry loop, cancellation.
-3. **HF downloader** — huggingface_hub snapshot_download into the standard
+2. **HF downloader** — huggingface_hub snapshot_download into the standard
    shared HF cache (respect existing ComfyUI caches), resume, disk-space
    preflight, gated-model token flow with a clear 401 path.
-4. **FastAPI server** — routes: diagnose, models, recipes CRUD+validate,
+3. **FastAPI server** — routes: diagnose, models, recipes CRUD+validate,
    jobs (start/status/cancel), artifacts. The UI talks only to this.
-5. **Dataset prep** — ingestion, dedup, bucketing prep, auto-captioning
+4. **Dataset prep** — ingestion, dedup, bucketing prep, auto-captioning
    (Florence-2 / WD14 as optional models), caption editor backend,
    trigger-word injection.
-6. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
+5. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
    (model, dataset, go) with preset applied silently; advanced pane
    pre-filled with preset values.
-7. Later: musubi-tuner adapter (video), LoRA format converters, sample
+6. Later: musubi-tuner adapter (video), LoRA format converters, sample
    gallery, community recipe sharing.
 
 Nightly ambition once hardware CI exists (self-hosted runner on a real GPU):

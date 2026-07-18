@@ -11,6 +11,7 @@ a weekend job instead of a rewrite.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
@@ -18,6 +19,13 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from loraforge.recipes.schema import Recipe
+
+
+def venv_bin(env_dir: Path, name: str) -> Path:
+    """Cross-platform path to an executable inside a venv (Scripts/ vs bin/)."""
+    if sys.platform == "win32":
+        return env_dir / "Scripts" / f"{name}.exe"
+    return env_dir / "bin" / name
 
 
 @dataclass(frozen=True)

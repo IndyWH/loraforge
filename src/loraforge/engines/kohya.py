@@ -12,11 +12,10 @@ a data edit, mirroring the capability-matrix philosophy.
 from __future__ import annotations
 
 import re
-import sys
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from loraforge.engines.base import LaunchPlan, ProgressEvent, TrainResult
+from loraforge.engines.base import LaunchPlan, ProgressEvent, TrainResult, venv_bin
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -62,13 +61,6 @@ _LOSS_RE = re.compile(r"avr_loss=([0-9.eE+-]+)")
 _OOM_MARKERS = ("CUDA out of memory", "torch.OutOfMemoryError", "CUBLAS_STATUS_ALLOC_FAILED")
 
 
-def _venv_bin(env_dir: Path, name: str) -> Path:
-    """Cross-platform path to an executable inside a venv."""
-    if sys.platform == "win32":
-        return env_dir / "Scripts" / f"{name}.exe"
-    return env_dir / "bin" / name
-
-
 class KohyaAdapter:
     """EngineAdapter implementation for kohya-ss/sd-scripts."""
 
@@ -93,7 +85,7 @@ class KohyaAdapter:
         problems: list[str] = []
         if not self.sd_scripts_dir.is_dir():
             problems.append(f"sd-scripts checkout not found at {self.sd_scripts_dir}")
-        accelerate = _venv_bin(env_dir, "accelerate")
+        accelerate = venv_bin(env_dir, "accelerate")
         if not accelerate.exists():
             problems.append(
                 f"engine environment incomplete: {accelerate} missing "
@@ -120,7 +112,7 @@ class KohyaAdapter:
         }
 
         argv: list[str] = [
-            str(_venv_bin(self.env_dir, "accelerate")),
+            str(venv_bin(self.env_dir, "accelerate")),
             "launch",
             "--num_cpu_threads_per_process", "2",
             str(self.sd_scripts_dir / spec.script),

@@ -1,7 +1,8 @@
-"""Minimal CLI: `loraforge diagnose` prints the hardware + capability report.
+"""Minimal CLI.
 
-The server and train commands land next; diagnose ships first because it is
-also the bug-report generator.
+`loraforge diagnose` prints the hardware + capability report (also the
+bug-report generator). `loraforge setup` bootstraps the training engine:
+pinned checkout + uv-managed env + the torch wheels this GPU needs.
 """
 
 from __future__ import annotations
@@ -9,8 +10,10 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 from loraforge.capability.resolver import Availability, resolve
+from loraforge.engines.bootstrap import ENGINE_SPECS, BootstrapError, EngineBootstrapper
 from loraforge.probe import probe
 
 _ICONS = {
@@ -25,7 +28,18 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     diag = sub.add_parser("diagnose", help="probe hardware and show what you can train")
     diag.add_argument("--json", action="store_true", help="machine-readable output (bug reports)")
+    setup = sub.add_parser("setup", help="install the training engine for this GPU (idempotent)")
+    setup.add_argument("--engine", default="kohya", choices=sorted(ENGINE_SPECS))
+    setup.add_argument(
+        "--root", type=Path, default=None, help="engines directory (default: per-user data dir)"
+    )
+    setup.add_argument(
+        "--dry-run", action="store_true", help="show what setup would do without doing it"
+    )
     args = parser.parse_args(argv)
+
+    if args.command == "setup":
+        return _cmd_setup(args)
 
     report = probe()
     caps = resolve(report)
@@ -65,6 +79,43 @@ def main(argv: list[str] | None = None) -> int:
         print(line)
     for w in caps.warnings:
         print(f"\nwarning: {w}")
+    return 0
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    report = probe()
+    boot = EngineBootstrapper(ENGINE_SPECS[args.engine], report, engines_root=args.root)
+
+    gpu = report.primary_gpu
+    if gpu:
+        print(f"GPU     : {gpu.name} → PyTorch {boot.torch.cuda} wheels")
+    if boot.torch.note:
+        print(f"note    : {boot.torch.note}")
+
+    problems = boot.preflight()
+    if problems:
+        for p in problems:
+            print(f"problem : {p}", file=sys.stderr)
+        return 1
+
+    steps = boot.plan()
+    if not steps:
+        print(f"Engine '{args.engine}' is ready at {boot.paths.root} — nothing to do.")
+        return 0
+    if args.dry_run:
+        print(f"Would run {len(steps)} step(s):")
+        for step in steps:
+            print(f"  - {step.description}")
+        return 0
+
+    try:
+        boot.run(on_step=lambda s: print(f"→ {s.description}"))
+    except BootstrapError as exc:
+        print(f"setup failed:\n{exc}", file=sys.stderr)
+        return 1
+    print("Engine ready.")
+    print(f"  checkout: {boot.paths.checkout}")
+    print(f"  env     : {boot.paths.env}")
     return 0
 
 
