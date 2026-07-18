@@ -7,6 +7,7 @@ schema stays truthful to what the code actually returns.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -40,3 +41,33 @@ class DownloadStatus(BaseModel):
 class ValidateResponse(BaseModel):
     valid: bool
     errors: list[str] = Field(default_factory=list)  # human-worded, verbatim
+
+
+class DatasetCreate(BaseModel):
+    name: str
+
+
+class DatasetCreated(BaseModel):
+    name: str
+    path: Path  # what a recipe's dataset.path should reference
+
+
+class IngestRequest(BaseModel):
+    sources: list[Path]  # local files chosen by the user; copied, never moved
+
+
+class CaptionPayload(BaseModel):
+    caption: str
+
+
+class CaptionResponse(BaseModel):
+    filename: str
+    caption: str | None  # None: image exists but has no sidecar yet
+
+
+class TriggerRequest(BaseModel):
+    trigger_word: str
+
+
+class TriggerResponse(BaseModel):
+    updated: int  # captions created or changed (idempotent: 0 on re-run)

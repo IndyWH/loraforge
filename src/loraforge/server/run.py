@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 from typing import TYPE_CHECKING
 
+from loraforge.datasets.library import DatasetLibrary
 from loraforge.downloader import ModelDownloader, adapter_paths
 from loraforge.engines.bootstrap import KOHYA, default_data_root, engine_paths
 from loraforge.engines.kohya import KohyaAdapter
@@ -61,6 +62,7 @@ def build_default_deps() -> ServerDeps:
     return ServerDeps(
         runner=JobRunner(adapter, data_root / "jobs"),
         downloads=DownloadManager(downloader, on_complete=wire_download),
+        datasets=DatasetLibrary(data_root / "datasets"),
         recipes_dir=data_root / "recipes",
         jobs_root=data_root / "jobs",
         probe=probe,

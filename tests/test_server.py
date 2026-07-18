@@ -11,9 +11,11 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 from test_capability import fake_report
+from test_datasets import fake_photo
 from test_downloader import make_downloader
 from test_job_runner import FakeAdapter, FakeProcess, FakeSpawner, make_recipe
 
+from loraforge.datasets.library import DatasetLibrary
 from loraforge.jobs.runner import JobRunner
 from loraforge.server.app import ServerDeps, create_app
 from loraforge.server.downloads import DownloadManager
@@ -27,6 +29,7 @@ def make_client(tmp_path, procs=()) -> tuple[TestClient, ServerDeps]:
     deps = ServerDeps(
         runner=JobRunner(FakeAdapter(), tmp_path / "jobs", spawn=FakeSpawner(*procs)),
         downloads=DownloadManager(downloader),
+        datasets=DatasetLibrary(tmp_path / "datasets"),
         recipes_dir=tmp_path / "recipes",
         jobs_root=tmp_path / "jobs",
         probe=lambda: RTX_3060,
@@ -167,6 +170,48 @@ def test_recipe_crud_roundtrip(tmp_path) -> None:
         assert client.get("/recipes/tuxedo-cat").status_code == 404
         # names are constrained: no traversal, no separators
         assert client.get("/recipes/bad%20name").status_code == 400
+
+
+# ── Datasets ─────────────────────────────────────────────────────────────────
+
+
+def test_dataset_routes_flow(tmp_path) -> None:
+    client, _ = make_client(tmp_path)
+    sources = [str(fake_photo(tmp_path / "src" / f"cat-{i}.png", seed=i)) for i in range(2)]
+    with client:
+        created = client.post("/datasets", json={"name": "cats"})
+        assert created.status_code == 201
+        assert client.get("/datasets").json() == ["cats"]
+        assert client.post("/datasets", json={"name": "no/slashes"}).status_code == 400
+
+        ingest = client.post("/datasets/cats/images", json={"sources": sources}).json()
+        assert sorted(ingest["added"]) == ["cat-0.png", "cat-1.png"]
+
+        summary = client.get("/datasets/cats").json()
+        assert (summary["total"], summary["included"]) == (2, 2)
+        assert {i["filename"] for i in summary["images"]} == {"cat-0.png", "cat-1.png"}
+        assert all(i["has_caption"] is False for i in summary["images"])
+
+        put = client.put(
+            "/datasets/cats/captions/cat-0.png", json={"caption": "a cat, sitting"}
+        )
+        assert put.status_code == 200
+        got = client.get("/datasets/cats/captions/cat-0.png").json()
+        assert got["caption"] == "a cat, sitting"
+        assert client.get("/datasets/cats/captions/ghost.png").status_code == 404
+
+        trigger = client.post(
+            "/datasets/cats/trigger-word", json={"trigger_word": "sks-cat"}
+        ).json()
+        assert trigger["updated"] == 2
+        assert (
+            client.get("/datasets/cats/captions/cat-0.png").json()["caption"]
+            == "sks-cat, a cat, sitting"
+        )
+
+        assert client.get("/datasets/nope").status_code == 404
+        assert client.delete("/datasets/cats").status_code == 204
+        assert client.get("/datasets").json() == []
 
 
 # ── Jobs ─────────────────────────────────────────────────────────────────────

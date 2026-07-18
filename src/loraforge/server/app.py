@@ -24,11 +24,19 @@ from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from loraforge.capability.resolver import resolve
+from loraforge.datasets.library import DatasetSummary, IngestResult
 from loraforge.recipes.schema import Recipe, validation_messages
 from loraforge.server.schemas import (
+    CaptionPayload,
+    CaptionResponse,
+    DatasetCreate,
+    DatasetCreated,
     DiagnoseResponse,
     DownloadStatus,
+    IngestRequest,
     ModelStatus,
+    TriggerRequest,
+    TriggerResponse,
     ValidateResponse,
 )
 from loraforge.server.security import LocalRequestsOnly
@@ -36,11 +44,12 @@ from loraforge.server.security import LocalRequestsOnly
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
+    from loraforge.datasets.library import DatasetLibrary
     from loraforge.jobs.runner import JobRunner
     from loraforge.probe import HardwareReport
     from loraforge.server.downloads import DownloadManager
 
-_RECIPE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,119}$")
 _TERMINAL_JOB_STATES = ("completed", "failed", "cancelled")
 
 
@@ -50,6 +59,7 @@ class ServerDeps:
 
     runner: JobRunner
     downloads: DownloadManager
+    datasets: DatasetLibrary
     recipes_dir: Path
     jobs_root: Path
     probe: Callable[[], HardwareReport]
@@ -116,7 +126,7 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
     # ── Recipes ──────────────────────────────────────────────────────────────
 
     def recipe_path(name: str) -> Path:
-        if not _RECIPE_NAME.match(name):
+        if not _SAFE_NAME.match(name):
             raise HTTPException(
                 400, "recipe names may only contain letters, digits, '.', '-' and '_'"
             )
@@ -155,6 +165,73 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
         except ValidationError as exc:
             return ValidateResponse(valid=False, errors=validation_messages(exc))
         return ValidateResponse(valid=True)
+
+    # ── Datasets ─────────────────────────────────────────────────────────────
+
+    def dataset_name(name: str) -> str:
+        if not _SAFE_NAME.match(name):
+            raise HTTPException(
+                400, "dataset names may only contain letters, digits, '.', '-' and '_'"
+            )
+        return name
+
+    @app.get("/datasets", response_model=list[str])
+    def list_datasets() -> list[str]:
+        return deps.datasets.list_names()
+
+    @app.post("/datasets", response_model=DatasetCreated, status_code=201)
+    def create_dataset(body: DatasetCreate) -> DatasetCreated:
+        path = deps.datasets.create(dataset_name(body.name))
+        return DatasetCreated(name=body.name, path=path)
+
+    @app.get("/datasets/{name}", response_model=DatasetSummary)
+    def dataset_status(name: str) -> DatasetSummary:
+        try:
+            return deps.datasets.status(dataset_name(name))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.delete("/datasets/{name}", status_code=204)
+    def delete_dataset(name: str) -> None:
+        try:
+            deps.datasets.delete(dataset_name(name))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.post("/datasets/{name}/images", response_model=IngestResult)
+    def ingest_images(name: str, body: IngestRequest) -> IngestResult:
+        try:
+            return deps.datasets.ingest(dataset_name(name), body.sources)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @app.get("/datasets/{name}/captions/{filename}", response_model=CaptionResponse)
+    def get_caption(name: str, filename: str) -> CaptionResponse:
+        try:
+            caption = deps.datasets.get_caption(dataset_name(name), filename)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return CaptionResponse(filename=filename, caption=caption)
+
+    @app.put("/datasets/{name}/captions/{filename}", response_model=CaptionResponse)
+    def put_caption(name: str, filename: str, body: CaptionPayload) -> CaptionResponse:
+        try:
+            deps.datasets.set_caption(dataset_name(name), filename, body.caption)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return CaptionResponse(filename=filename, caption=body.caption.strip())
+
+    @app.post("/datasets/{name}/trigger-word", response_model=TriggerResponse)
+    def inject_trigger(name: str, body: TriggerRequest) -> TriggerResponse:
+        try:
+            updated = deps.datasets.inject_trigger_word(dataset_name(name), body.trigger_word)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return TriggerResponse(updated=updated)
 
     # ── Jobs ─────────────────────────────────────────────────────────────────
 

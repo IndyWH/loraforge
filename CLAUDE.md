@@ -123,16 +123,27 @@ Done and tested (18 tests, ruff clean, CI on Ubuntu+Windows):
   (human errors verbatim), /jobs (submit/list/get/cancel, WS events
   wrapping runner.events()). Loopback-only bind unless --allow-remote
   (run.ensure_local_bind). DI via ServerDeps; real wiring in
-  run.build_default_deps(). CLI: `loraforge serve`.
+  run.build_default_deps(). CLI: `loraforge serve`. Hardening:
+  security.LocalRequestsOnly rejects non-loopback Host (DNS rebinding)
+  and cross-origin writes/WS (loopback + Tauri origins allowed; no-Origin
+  passes); GET /jobs/{id}/artifact serves the trained LoRA.
+- `datasets/` — torch-free dataset prep (pillow): ingest copies into
+  data_root/datasets (originals never moved), sha256 exact-dup skip,
+  128-bit dHash near-dup warnings, quality checks (<256px excluded,
+  <512px warned, unreadable excluded — human reasons), .txt caption
+  sidecars with whole-word trigger injection, DatasetSummary whose path
+  a recipe references. `captioner.py` — Captioner protocol (engine-style
+  subprocess design) + stub; auto-captioning itself NOT implemented yet.
+  Server routes: /datasets CRUD, images ingest, captions get/put,
+  trigger-word.
 
 ## Roadmap (in order — don't skip ahead)
 
-1. **Dataset prep** — ingestion, dedup, bucketing prep, auto-captioning
-   (Florence-2 / WD14 as optional models), caption editor backend,
-   trigger-word injection.
-2. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
+1. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
    (model, dataset, go) with preset applied silently; advanced pane
    pre-filled with preset values.
+2. **Captioner engine** — Florence-2 / WD14 adapters implementing
+   datasets/captioner.Captioner, bootstrapped like training engines.
 3. Later: musubi-tuner adapter (video), LoRA format converters, sample
    gallery, community recipe sharing.
 
