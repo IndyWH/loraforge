@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "loraforge"
+version = "0.1.0"
+description = "Train LoRAs on the GPU you actually own. A hardware-aware, recipe-driven LoRA training studio for NVIDIA gaming cards."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{ name = "Wajira" }]
+keywords = ["lora", "diffusion", "training", "sdxl", "flux", "stable-diffusion"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Environment :: GPU :: NVIDIA CUDA",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+# Core app dependencies only. Torch and the training engines live in their own
+# uv-managed environments (see docs: engine isolation) so the app layer is
+# never hostage to an engine's pins.
+dependencies = [
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "huggingface_hub>=0.34",
+    "psutil>=5.9",
+    "nvidia-ml-py>=12.0",   # official pynvml bindings; probe degrades gracefully without a GPU
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.5", "mypy>=1.10"]
+
+[project.scripts]
+loraforge = "loraforge.cli:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "TCH", "PTH", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
