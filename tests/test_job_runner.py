@@ -303,29 +303,43 @@ def test_late_subscriber_replays_history_and_terminates(tmp_path: Path) -> None:
 # ── Step-down ladder (sync unit tests) ───────────────────────────────────────
 
 
-def test_ladder_flux_blocks_then_resolution(tmp_path: Path) -> None:
-    recipe = make_recipe(tmp_path, model="flux_dev")
+def test_ladder_full_order_flux(tmp_path: Path) -> None:
+    # block swap (18 → 34) → gradient checkpointing → resolution notch
+    recipe = make_recipe(
+        tmp_path, **{"model": "flux_dev", "train.gradient_checkpointing": False}
+    )
     one = step_down(recipe)
     assert one.recipe.train.blocks_to_swap == 18
+    assert one.recipe.train.gradient_checkpointing is False  # one rung at a time
     two = step_down(one.recipe)
     assert two.recipe.train.blocks_to_swap == 34
-    three = step_down(two.recipe)  # blocks exhausted → resolution notch
-    assert three.recipe.dataset.resolution == 768
-    assert "768" in three.message
+    three = step_down(two.recipe)  # blocks exhausted → checkpointing before resolution
+    assert three.recipe.train.gradient_checkpointing is True
+    assert three.recipe.dataset.resolution == 1024
+    assert "checkpointing" in three.message
+    four = step_down(three.recipe)
+    assert four.recipe.dataset.resolution == 768
+    assert "768" in four.message
 
 
-def test_ladder_sdxl_resolution_then_batch(tmp_path: Path) -> None:
-    recipe = make_recipe(tmp_path, **{"train.batch_size": 4})
-    one = step_down(recipe)  # no block swap for sdxl
-    assert one.recipe.dataset.resolution == 768
+def test_ladder_full_order_sdxl(tmp_path: Path) -> None:
+    # no block swap for sdxl: checkpointing → resolution x2 → halve batch x2 → exhausted
+    recipe = make_recipe(
+        tmp_path, **{"train.gradient_checkpointing": False, "train.batch_size": 4}
+    )
+    one = step_down(recipe)
+    assert one.recipe.train.gradient_checkpointing is True
+    assert one.recipe.dataset.resolution == 1024  # quality untouched by the speed-only rung
     assert one.recipe.train.blocks_to_swap == 0
     two = step_down(one.recipe)
-    assert two.recipe.dataset.resolution == 512
-    three = step_down(two.recipe)  # notches exhausted → halve batch
-    assert three.recipe.train.batch_size == 2
-    four = step_down(three.recipe)
-    assert four.recipe.train.batch_size == 1
-    assert step_down(four.recipe) is None  # ladder exhausted
+    assert two.recipe.dataset.resolution == 768
+    three = step_down(two.recipe)
+    assert three.recipe.dataset.resolution == 512
+    four = step_down(three.recipe)  # notches exhausted → halve batch
+    assert four.recipe.train.batch_size == 2
+    five = step_down(four.recipe)
+    assert five.recipe.train.batch_size == 1
+    assert step_down(five.recipe) is None  # ladder exhausted
 
 
 def test_ladder_block_swap_respects_batch_size_rule(tmp_path: Path) -> None:

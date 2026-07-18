@@ -5,9 +5,11 @@ recipe. One rung per OOM event, in this order:
 
 1. swap more model blocks to system RAM, if the model supports it (18 → 34):
    big VRAM win, costs only speed, never quality;
-2. drop resolution one notch (1024 → 768 → 512): visible in results, so it
-   comes second;
-3. halve the batch size: last, because presets already run tight batches and
+2. enable gradient checkpointing, if it is off: also costs only speed, so it
+   must come before anything visible in results;
+3. drop resolution one notch (1024 → 768 → 512): visible in results, so it
+   comes after every speed-only lever;
+4. halve the batch size: last, because presets already run tight batches and
    halving 1 is impossible.
 
 Every rung returns a *validated* recipe (``with_overrides`` re-runs pydantic)
@@ -64,6 +66,13 @@ def step_down(recipe: Recipe) -> StepDown | None:
                 overrides["train.batch_size"] = 2
                 message += " Batch size lowered to 2 to go with it."
             return StepDown(recipe.with_overrides(overrides), message)
+
+    if not train.gradient_checkpointing:
+        return StepDown(
+            recipe.with_overrides({"train.gradient_checkpointing": True}),
+            "Turning on gradient checkpointing "
+            "(slower steps, much less VRAM, identical results).",
+        )
 
     notch = next((n for n in _RESOLUTION_NOTCHES if n < dataset.resolution), None)
     if notch is not None:
