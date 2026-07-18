@@ -109,6 +109,10 @@ def test_models_merges_capability_with_download_state(tmp_path) -> None:
     by_key = {e["capability"]["model_key"]: e for e in entries}
     assert by_key["sdxl"]["download_state"] == "not_downloaded"
     assert by_key["sdxl"]["capability"]["status"] == "available"
+    # source facts + preset VRAM for the UI's model cards and contract panel
+    assert by_key["sdxl"]["download_gb"] == 7.0 and by_key["sdxl"]["gated"] is False
+    assert by_key["flux_dev"]["gated"] is True
+    assert by_key["sdxl"]["capability"]["min_free_vram_mb"] > 0
 
     with client:
         assert client.post("/models/nonsense/download").status_code == 404

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JobEventMsg } from "./api";
-import { emptyJobView, foldEvents } from "./jobView";
+import { emptyJobView, etaMinutes, foldEvents } from "./jobView";
 
 let seq = 0;
 const state = (s: string, message: string | null = null): JobEventMsg => ({
@@ -56,6 +56,22 @@ describe("foldEvents", () => {
     expect(view2.losses).toHaveLength(2); // no double-counted points
     expect(view2.step).toBe(6);
     expect(view2.terminal).toBe(true);
+  });
+
+  it("estimates ETA from live samples but not replay bursts", () => {
+    // replay: 100 steps "arrive" in 200ms — no evidence of real speed
+    const burst = [
+      { t: 1000, step: 0 },
+      { t: 1200, step: 100 },
+    ];
+    expect(etaMinutes(burst, 1500)).toBeNull();
+    // live: 100 steps in 100s → 1 step/s → 1400s ≈ 24 min left
+    const live = [
+      { t: 0, step: 0 },
+      { t: 100_000, step: 100 },
+    ];
+    expect(etaMinutes(live, 1500)).toBe(24);
+    expect(etaMinutes(live, null)).toBeNull();
   });
 
   it("treats completed_early as terminal (stop-and-keep)", () => {

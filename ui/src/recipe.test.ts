@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ModelCapability } from "./api";
-import { buildRecipe, defaultKnobs } from "./recipe";
+import { buildRecipe, defaultKnobs, defaultLoraName } from "./recipe";
 
 const sdxlPreset: ModelCapability = {
   model_key: "sdxl",
@@ -9,6 +9,7 @@ const sdxlPreset: ModelCapability = {
   status: "available",
   preset_name: "tight",
   settings: { resolution: 768, batch_size: 1, gradient_checkpointing: true },
+  min_free_vram_mb: 7000,
   reason: null,
 };
 
@@ -31,5 +32,17 @@ describe("buildRecipe", () => {
       sample_every_steps: 200,
       sample_prompts: ["a sks-cat photo"],
     });
+  });
+
+  it("lets the advanced resolution knob override the preset", () => {
+    const doc = buildRecipe("x", sdxlPreset, "/d", "", { ...defaultKnobs, resolution: 1024 }, "");
+    expect(doc.dataset).toMatchObject({ resolution: 1024 });
+  });
+});
+
+describe("defaultLoraName", () => {
+  it("slugs the trigger word with the model key", () => {
+    expect(defaultLoraName("ohwx person", "sdxl")).toBe("ohwx-person-sdxl");
+    expect(defaultLoraName("", "sdxl")).toBe("my-first-lora");
   });
 });

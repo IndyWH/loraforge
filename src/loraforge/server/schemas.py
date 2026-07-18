@@ -26,10 +26,12 @@ class DiagnoseResponse(BaseModel):
 
 
 class ModelStatus(BaseModel):
-    """Capability verdict merged with local download state."""
+    """Capability verdict merged with local download state and source facts."""
 
     capability: ModelCapability
     download_state: DownloadStateName
+    download_gb: float | None = None
+    gated: bool | None = None  # needs the HF licence-acceptance step
 
 
 class DownloadStatus(BaseModel):

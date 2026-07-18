@@ -39,6 +39,23 @@ export const emptyJobView: JobView = {
   maxSeq: -1,
 };
 
+// ETA from live progress samples. Replayed history arrives in a burst, so a
+// span under 5 seconds is not evidence of speed — report "unknown" instead.
+export interface RateSample {
+  t: number; // wall-clock ms
+  step: number;
+}
+
+export function etaMinutes(samples: RateSample[], totalSteps: number | null): number | null {
+  if (!totalSteps || samples.length < 2) return null;
+  const first = samples[0];
+  const last = samples[samples.length - 1];
+  const seconds = (last.t - first.t) / 1000;
+  const steps = last.step - first.step;
+  if (seconds < 5 || steps <= 0) return null;
+  return Math.ceil((totalSteps - last.step) / (steps / seconds) / 60);
+}
+
 export function foldEvents(view: JobView, events: JobEventMsg[]): JobView {
   let next = view;
   for (const event of events) {

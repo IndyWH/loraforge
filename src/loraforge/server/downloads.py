@@ -38,6 +38,11 @@ class DownloadManager:
     def known_models(self) -> set[str]:
         return set(self._downloader.sources)
 
+    def source_facts(self, model_key: str) -> tuple[float, bool] | None:
+        """(download_gb, gated) for the UI's model cards; None if unknown."""
+        source = self._downloader.sources.get(model_key)
+        return None if source is None else (source.download_gb, source.gated)
+
     def status(self, model_key: str) -> DownloadStateName:
         if model_key in self._results:
             return "downloaded"

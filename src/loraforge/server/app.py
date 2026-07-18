@@ -109,10 +109,18 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
     @app.get("/models", response_model=list[ModelStatus])
     def models() -> list[ModelStatus]:
         capabilities = resolve(deps.probe(), deps.matrix)
-        return [
-            ModelStatus(capability=m, download_state=deps.downloads.status(m.model_key))
-            for m in capabilities.models
-        ]
+        entries = []
+        for m in capabilities.models:
+            facts = deps.downloads.source_facts(m.model_key)
+            entries.append(
+                ModelStatus(
+                    capability=m,
+                    download_state=deps.downloads.status(m.model_key),
+                    download_gb=facts[0] if facts else None,
+                    gated=facts[1] if facts else None,
+                )
+            )
+        return entries
 
     @app.post("/models/{model_key}/download", response_model=DownloadStatus, status_code=202)
     async def start_download(model_key: str) -> DownloadStatus:

@@ -4,6 +4,14 @@ import { Step } from "../App";
 import { api } from "../api";
 import type { DownloadEventMsg, ModelStatus } from "../api";
 
+// Card blurbs from the mockup; unknown models fall back to the display name.
+const BLURBS: Record<string, string> = {
+  sdxl: "The reliable all-rounder. Fast to train, huge community.",
+  flux_dev: "Best image quality. Slower, bigger download.",
+  sd15: "The lightweight classic. Quickest experiments.",
+};
+const THUMBS = ["g1", "g2", "g3", "g4"];
+
 // Gated-model failures carry the license-acceptance URL (docs/decisions.md
 // §12 promises a clickable link, not a string to retype).
 function Linkified({ text }: { text: string }) {
@@ -30,89 +38,102 @@ export function ModelSection(props: {
   onSelect: (key: string) => void;
   onModelsChanged: () => void;
 }) {
-  const [downloadNote, setDownloadNote] = useState<Record<string, string>>({});
-  const sockets = useRef<Record<string, WebSocket>>({});
+  const [dlLabel, setDlLabel] = useState<string | null>(null);
+  const [dlFailed, setDlFailed] = useState(false);
+  const [dlDone, setDlDone] = useState(false);
+  const socket = useRef<WebSocket | null>(null);
 
-  useEffect(() => () => Object.values(sockets.current).forEach((s) => s.close()), []);
+  useEffect(() => () => socket.current?.close(), []);
 
-  const startDownload = async (key: string) => {
-    await api.startDownload(key);
-    props.onModelsChanged();
-    const socket = new WebSocket(api.downloadEventsUrl(key));
-    sockets.current[key] = socket;
-    socket.onmessage = (frame) => {
-      const event: DownloadEventMsg = JSON.parse(frame.data);
-      if (event.state === "completed" || event.state === "failed") {
-        setDownloadNote((n) => ({ ...n, [key]: event.state === "failed" ? (event.message ?? "download failed") : "" }));
-        props.onModelsChanged();
-        socket.close();
-      } else {
-        setDownloadNote((n) => ({ ...n, [key]: event.message ?? "downloading…" }));
-      }
-    };
+  const pick = (entry: ModelStatus) => {
+    const key = entry.capability.model_key;
+    props.onSelect(key);
+    if (entry.download_state === "downloaded" || entry.download_state === "downloading") return;
+    void api.startDownload(key).then(() => {
+      props.onModelsChanged();
+      setDlFailed(false);
+      setDlDone(false);
+      setDlLabel(`Downloading ${entry.capability.display_name} weights…`);
+      socket.current?.close();
+      const ws = new WebSocket(api.downloadEventsUrl(key));
+      socket.current = ws;
+      ws.onmessage = (frame) => {
+        const event: DownloadEventMsg = JSON.parse(frame.data);
+        if (event.state === "completed") {
+          setDlDone(true);
+          setDlLabel(`✓ ${entry.capability.display_name} ready (cached for next time)`);
+          props.onModelsChanged();
+          ws.close();
+        } else if (event.state === "failed") {
+          setDlFailed(true);
+          setDlLabel(event.message ?? "Download failed — see the server log.");
+          props.onModelsChanged();
+          ws.close();
+        } else if (event.message) {
+          setDlLabel(`${event.message} (reusing what your other tools already have)`);
+        }
+      };
+    });
   };
+
+  const firstAvailable = props.models.find((m) => m.capability.status === "available");
 
   return (
     <Step
-      num={2}
-      title="Pick a model"
-      lede="These verdicts come from your card, not from wishful thinking. Greyed-out options say why."
+      num={1}
+      tag="Choose a model"
+      title="What do you want to teach?"
+      sub={
+        <>
+          Pick the base model your LoRA will be built on. Cards are matched to <em>your</em>{" "}
+          hardware.
+        </>
+      }
       unlocked={props.unlocked}
-      lockHint="Waiting for the hardware check above."
     >
-      <div className="cards">
-        {props.models.map(({ capability: cap, download_state }) => {
+      <div className="models">
+        {props.models.map((entry, index) => {
+          const cap = entry.capability;
           const available = cap.status === "available";
-          const selected = props.selected === cap.model_key;
           return (
             <div
               key={cap.model_key}
-              className={`card ${selected ? "selected" : ""} ${available ? "" : "disabled"}`}
-              onClick={() => available && props.onSelect(cap.model_key)}
+              className={`model ${props.selected === cap.model_key ? "selected" : ""} ${available ? "" : "disabled"}`}
+              onClick={() => available && pick(entry)}
             >
+              {available && entry === firstAvailable && (
+                <div className="badge">Recommended for your GPU</div>
+              )}
+              <div className={`thumb ${THUMBS[index % THUMBS.length]}`} />
               <h3>{cap.display_name}</h3>
+              <p>{BLURBS[cap.model_key] ?? ""}</p>
               {available ? (
-                <>
-                  <div className="preset">preset: {cap.preset_name}</div>
-                  <div className="chips">
-                    {Object.entries(cap.settings).map(([k, v]) => (
-                      <span key={k} className="chip">
-                        <span className="k">{k}</span> <span className="v">{String(v)}</span>
-                      </span>
-                    ))}
-                  </div>
-                  {download_state === "downloaded" && (
-                    <p className="why" style={{ color: "var(--ok)" }}>✓ weights on disk</p>
-                  )}
-                  {download_state === "not_downloaded" && (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        void startDownload(cap.model_key);
-                      }}
-                    >
-                      Download weights
-                    </button>
-                  )}
-                  {download_state === "downloading" && (
-                    <p className="why">{downloadNote[cap.model_key] || "downloading…"}</p>
-                  )}
-                  {download_state === "failed" && (
-                    <p className="why" style={{ color: "var(--err)" }}>
-                      <Linkified text={downloadNote[cap.model_key] || "download failed — see server log"} />
-                    </p>
-                  )}
-                </>
+                <div className="meta">
+                  {entry.download_gb !== null && `${entry.download_gb} GB download · `}
+                  {entry.download_state === "downloaded"
+                    ? "weights on disk ✓"
+                    : entry.gated
+                      ? "needs free HF licence step"
+                      : "free license"}
+                </div>
               ) : (
-                <p className="why">{cap.reason}</p>
+                <div className="reason">{cap.reason}</div>
               )}
             </div>
           );
         })}
       </div>
-      <p className="smallnote" style={{ marginTop: 10 }}>
-        You can keep going while weights download — training waits for them, not you.
-      </p>
+
+      {dlLabel && (
+        <div className="dl">
+          <div className="bar">
+            <i className={dlDone || dlFailed ? "" : "busy"} style={dlDone ? { width: "100%" } : undefined} />
+          </div>
+          <div className={`bar-label ${dlFailed ? "err" : ""}`}>
+            <Linkified text={dlLabel} />
+          </div>
+        </div>
+      )}
     </Step>
   );
 }

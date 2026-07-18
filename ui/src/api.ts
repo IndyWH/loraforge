@@ -38,12 +38,15 @@ export interface ModelCapability {
   status: Availability;
   preset_name: string | null;
   settings: Record<string, number | boolean>;
+  min_free_vram_mb: number | null;
   reason: string | null;
 }
 
 export interface ModelStatus {
   capability: ModelCapability;
   download_state: DownloadState;
+  download_gb: number | null;
+  gated: boolean | null;
 }
 
 export interface ImageStatus {

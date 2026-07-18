@@ -41,6 +41,7 @@ class ModelCapability(BaseModel):
     status: Availability
     preset_name: str | None = None
     settings: dict[str, Any] = Field(default_factory=dict)
+    min_free_vram_mb: int | None = None  # the chosen preset's VRAM requirement
     reason: str | None = None  # set when not AVAILABLE, human-actionable
 
 
@@ -144,6 +145,7 @@ def resolve(report: HardwareReport, matrix: dict[str, Any] | None = None) -> Cap
                     status=Availability.AVAILABLE,
                     preset_name=chosen["name"],
                     settings=dict(chosen["settings"]),
+                    min_free_vram_mb=chosen["min_free_vram_mb"],
                 )
             )
         else:
