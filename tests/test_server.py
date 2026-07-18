@@ -368,6 +368,32 @@ def test_cross_origin_writes_refused_plain_and_local_allowed(tmp_path) -> None:
         )
 
 
+# ── Web UI serving ───────────────────────────────────────────────────────────
+
+
+def test_ui_bundle_served_at_root_when_present(tmp_path) -> None:
+    from loraforge.server.app import create_app
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><title>LoRAForge</title>")
+    downloader, _ = make_downloader(tmp_path)
+    deps = ServerDeps(
+        runner=JobRunner(FakeAdapter(), tmp_path / "jobs", spawn=FakeSpawner()),
+        downloads=DownloadManager(downloader),
+        datasets=DatasetLibrary(tmp_path / "datasets"),
+        recipes_dir=tmp_path / "recipes",
+        jobs_root=tmp_path / "jobs",
+        probe=lambda: RTX_3060,
+        ui_dist=dist,
+    )
+    client = TestClient(create_app(deps), base_url="http://127.0.0.1:8471")
+    with client:
+        root = client.get("/")
+        assert root.status_code == 200 and "LoRAForge" in root.text
+        assert client.get("/diagnose").status_code == 200  # API routes still win
+
+
 # ── Bind policy ──────────────────────────────────────────────────────────────
 
 

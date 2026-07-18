@@ -137,13 +137,24 @@ Done and tested (18 tests, ruff clean, CI on Ubuntu+Windows):
   Server routes: /datasets CRUD, images ingest, captions get/put,
   trigger-word.
 
+- `ui/` — web UI phase A (Vite + React + TS, hand-rolled CSS, no component
+  lib): six scroll-unlock sections (hardware → model → photos → configure →
+  train → finish), receipt chips, disable-with-reason model cards, zero-knob
+  configure + advanced accordion, multipart drag-drop upload, caption editor,
+  trigger word, validate-then-submit, jobs WS with seq-deduped
+  reconnect-and-replay (refresh mid-training resumes), step-down banners,
+  stop-and-keep, artifact download, copy-paste prompt. Built bundle served
+  by FastAPI at / (ServerDeps.ui_dist); `npm run dev` (5173) hits the API
+  cross-origin (CORS grants loopback origins only). Pure logic lives in
+  jobView.ts/recipe.ts with vitest tests. CI has a frontend job.
+
 ## Roadmap (in order — don't skip ahead)
 
-1. **Tauri shell + web UI** — diagnose-first onboarding; simple mode
-   (model, dataset, go) with preset applied silently; advanced pane
-   pre-filled with preset values.
+1. **Tauri shell** — wrap the web UI in the desktop shell; installer story
+   (bundle uv, first-run engine setup flow).
 2. **Captioner engine** — Florence-2 / WD14 adapters implementing
-   datasets/captioner.Captioner, bootstrapped like training engines.
+   datasets/captioner.Captioner, bootstrapped like training engines; then
+   wire preview sample images into the training filmstrip.
 3. Later: musubi-tuner adapter (video), LoRA format converters, sample
    gallery, community recipe sharing.
 
@@ -157,6 +168,11 @@ uv venv && uv sync --extra dev
 uv run pytest -q            # all tests, fast, no GPU needed
 uv run ruff check src tests
 uv run loraforge diagnose   # hardware + capability report
+uv run loraforge serve      # API + web UI at http://127.0.0.1:8471
+
+cd ui && npm install
+npm run dev                 # UI dev server on 5173 (API must be running)
+npm run typecheck && npm test && npm run build
 ```
 
 ## Testing conventions

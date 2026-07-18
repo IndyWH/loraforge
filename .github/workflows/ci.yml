@@ -30,3 +30,30 @@ jobs:
 
       - name: Tests
         run: uv run pytest -q
+
+  frontend:
+    name: ui (typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build

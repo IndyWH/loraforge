@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 from loraforge.capability.resolver import resolve
@@ -66,6 +68,7 @@ class ServerDeps:
     jobs_root: Path
     probe: Callable[[], HardwareReport]
     matrix: dict[str, Any] | None = None  # None → the bundled capability matrix
+    ui_dist: Path | None = None  # built web UI to serve at / (ui/dist), if present
 
 
 def _payload(event: Any) -> dict[str, Any]:
@@ -85,6 +88,14 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
     app.state.deps = deps
     if local_only:  # off only under --allow-remote, where the user fronts their own auth
         app.add_middleware(LocalRequestsOnly)
+    # CORS headers for the Vite dev server (5173) and other loopback origins;
+    # foreign origins get no CORS grant (and LocalRequestsOnly 403s their writes).
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # ── Diagnostics ──────────────────────────────────────────────────────────
 
@@ -310,5 +321,10 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
         except WebSocketDisconnect:
             return
         await websocket.close()
+
+    # ── Web UI (built bundle) ────────────────────────────────────────────────
+    # Mounted last: API routes above always win; everything else is the app.
+    if deps.ui_dist is not None and deps.ui_dist.is_dir():
+        app.mount("/", StaticFiles(directory=deps.ui_dist, html=True), name="ui")
 
     return app

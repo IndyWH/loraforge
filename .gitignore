@@ -30,3 +30,7 @@ build/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Web UI
+ui/node_modules/
+ui/dist/

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from loraforge.datasets.library import DatasetLibrary
@@ -59,6 +60,9 @@ def build_default_deps() -> ServerDeps:
         if result.asset_paths:
             adapter.asset_paths[result.model_key] = dict(result.asset_paths)
 
+    # Dev checkout: serve the built web UI if it exists (repo_root/ui/dist).
+    # The packaged desktop build will ship the bundle differently (Tauri).
+    ui_dist = Path(__file__).resolve().parents[3] / "ui" / "dist"
     return ServerDeps(
         runner=JobRunner(adapter, data_root / "jobs"),
         downloads=DownloadManager(downloader, on_complete=wire_download),
@@ -66,6 +70,7 @@ def build_default_deps() -> ServerDeps:
         recipes_dir=data_root / "recipes",
         jobs_root=data_root / "jobs",
         probe=probe,
+        ui_dist=ui_dist if ui_dist.is_dir() else None,
     )
 
 
