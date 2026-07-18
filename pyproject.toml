@@ -28,7 +28,7 @@ dependencies = [
     "pyyaml>=6.0",
     "fastapi>=0.111",
     "uvicorn[standard]>=0.30",
-    "huggingface_hub>=0.34",
+    "huggingface_hub>=1.0",  # 1.x: httpx-based errors, `hf` CLI — downloader relies on both
     "psutil>=5.9",
     "nvidia-ml-py>=12.0",   # official pynvml bindings; probe degrades gracefully without a GPU
 ]

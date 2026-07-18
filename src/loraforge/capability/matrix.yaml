@@ -22,10 +22,14 @@ features:
 models:
   sdxl:
     display_name: "Stable Diffusion XL"
-    hf_repo: stabilityai/stable-diffusion-xl-base-1.0
-    gated: false
-    download_gb: 7
     engine: kohya
+    # Where the weights come from. `file` means a single-file checkpoint out
+    # of the repo; assets are extra components some engines need alongside it.
+    source:
+      repo: stabilityai/stable-diffusion-xl-base-1.0
+      file: sd_xl_base_1.0.safetensors
+      download_gb: 7
+      gated: false
     presets:
       - name: comfortable
         min_free_vram_mb: 15000
@@ -40,10 +44,18 @@ models:
 
   flux_dev:
     display_name: "FLUX.1-dev"
-    hf_repo: black-forest-labs/FLUX.1-dev
-    gated: true              # user must accept BFL license + provide HF token
-    download_gb: 35
     engine: kohya
+    source:
+      repo: black-forest-labs/FLUX.1-dev
+      file: flux1-dev.safetensors
+      download_gb: 35
+      gated: true            # user must accept BFL license; token via `hf auth login`
+      # kohya's flux script wants the text encoders and VAE as separate files;
+      # asset names must match MODEL_SPECS.required_assets in engines/kohya.py.
+      assets:
+        clip_l: {repo: comfyanonymous/flux_text_encoders, file: clip_l.safetensors}
+        t5xxl: {repo: comfyanonymous/flux_text_encoders, file: t5xxl_fp16.safetensors}
+        ae: {repo: black-forest-labs/FLUX.1-dev, file: ae.safetensors}
     presets:
       - name: comfortable
         min_free_vram_mb: 22000
@@ -61,10 +73,14 @@ models:
 
   sd15:
     display_name: "Stable Diffusion 1.5"
-    hf_repo: runwayml/stable-diffusion-v1-5
-    gated: false
-    download_gb: 4
     engine: kohya
+    source:
+      # runwayml/stable-diffusion-v1-5 was removed from HF; this is the
+      # maintained community mirror of the same weights.
+      repo: stable-diffusion-v1-5/stable-diffusion-v1-5
+      file: v1-5-pruned-emaonly.safetensors
+      download_gb: 4
+      gated: false
     presets:
       - name: standard
         min_free_vram_mb: 5500
