@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LoRAForge — guided training mockup</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:#0d0d0d; --surface:#1a1a19; --surface-2:#222220;
+    --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --baseline:#383835; --ring:rgba(255,255,255,0.10);
+    --accent:#3987e5; --accent-deep:#1c5cab;
+    --good:#0ca30c; --warning:#fab219; --serious:#ec835a; --critical:#d03b3b;
+    --radius:14px;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body {
+    background:var(--page); color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+    line-height:1.55;
+  }
+  /* ── Sticky header + receipt chips ─────────────────────── */
+  header {
+    position:sticky; top:0; z-index:50; background:rgba(13,13,13,0.92);
+    backdrop-filter:blur(8px); border-bottom:1px solid var(--ring);
+    padding:14px 24px; display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  }
+  .logo { font-weight:800; font-size:18px; letter-spacing:0.3px; }
+  .logo span { color:var(--accent); }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; }
+  .chip {
+    font-size:12.5px; color:var(--muted); border:1px solid var(--ring);
+    border-radius:999px; padding:4px 12px; cursor:default; transition:all .25s;
+    background:var(--surface);
+  }
+  .chip.done { color:var(--ink-2); border-color:rgba(12,163,12,.45); cursor:pointer; }
+  .chip.done::before { content:"✓ "; color:var(--good); font-weight:700; }
+  .chip.active { color:var(--ink); border-color:var(--accent); }
+  /* ── Sections ──────────────────────────────────────────── */
+  main { max-width:880px; margin:0 auto; padding:40px 20px 120px; }
+  section {
+    background:var(--surface); border:1px solid var(--ring); border-radius:var(--radius);
+    padding:34px 36px; margin-bottom:36px; transition:opacity .5s, filter .5s;
+    scroll-margin-top:90px;
+  }
+  section.locked { opacity:.35; filter:blur(1.5px) grayscale(.4); pointer-events:none; user-select:none; }
+  .step-tag { font-size:12px; font-weight:700; letter-spacing:1.5px; color:var(--accent); text-transform:uppercase; }
+  h2 { font-size:24px; margin:6px 0 4px; }
+  .sub { color:var(--ink-2); font-size:14.5px; margin-bottom:22px; }
+  .hint { color:var(--muted); font-size:13px; }
+  button {
+    font:inherit; cursor:pointer; border-radius:10px; border:1px solid var(--ring);
+    background:var(--surface-2); color:var(--ink); padding:10px 20px; transition:all .15s;
+  }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+  button.primary:hover { background:var(--accent-deep); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  /* ── S0 hardware ───────────────────────────────────────── */
+  .probe-log { font-family:ui-monospace,Consolas,monospace; font-size:13px; color:var(--ink-2);
+    background:var(--page); border:1px solid var(--ring); border-radius:10px; padding:14px 18px;
+    margin:18px 0; min-height:52px; white-space:pre-line; display:none; }
+  .verdict { display:none; margin-top:20px; }
+  .hw-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin:16px 0 20px; }
+  .hw-card { background:var(--surface-2); border:1px solid var(--ring); border-radius:10px; padding:14px 16px; }
+  .hw-card .k { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.8px; }
+  .hw-card .v { font-size:17px; font-weight:650; margin-top:3px; }
+  .hw-card .n { font-size:12.5px; color:var(--ink-2); }
+  .verdict-line { border-left:3px solid var(--good); padding:10px 16px; background:rgba(12,163,12,.08);
+    border-radius:0 8px 8px 0; font-size:15px; }
+  /* ── S1 model cards ────────────────────────────────────── */
+  .models { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-top:8px; }
+  .model {
+    border:1.5px solid var(--ring); border-radius:12px; padding:0 0 14px; cursor:pointer;
+    background:var(--surface-2); position:relative; overflow:hidden; transition:border-color .15s;
+  }
+  .model:hover { border-color:var(--accent); }
+  .model.selected { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+  .model.disabled { opacity:.55; cursor:not-allowed; }
+  .model.disabled:hover { border-color:var(--ring); }
+  .thumb { height:92px; }
+  .model h3 { font-size:15.5px; padding:10px 14px 2px; }
+  .model p { font-size:12.5px; color:var(--ink-2); padding:0 14px; }
+  .badge { position:absolute; top:8px; left:8px; background:var(--accent); color:#fff;
+    font-size:10.5px; font-weight:700; padding:3px 9px; border-radius:999px; letter-spacing:.4px; }
+  .meta { font-size:11.5px; color:var(--muted); padding:6px 14px 0; }
+  .reason { font-size:12px; color:var(--serious); padding:6px 14px 0; }
+  .dl { display:none; margin-top:20px; }
+  .bar { height:8px; background:var(--surface-2); border-radius:999px; overflow:hidden; border:1px solid var(--ring); }
+  .bar > i { display:block; height:100%; width:0%; background:var(--accent); border-radius:999px; transition:width .3s; }
+  .bar-label { font-size:13px; color:var(--ink-2); margin-top:8px; }
+  /* ── S2 dataset ────────────────────────────────────────── */
+  .drop {
+    border:2px dashed var(--baseline); border-radius:12px; padding:38px; text-align:center;
+    color:var(--ink-2); cursor:pointer; transition:border-color .15s; margin-bottom:18px;
+  }
+  .drop:hover { border-color:var(--accent); }
+  .ds-chips { display:none; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  .ds-chip { font-size:12.5px; padding:5px 12px; border-radius:999px; border:1px solid var(--ring); }
+  .ds-chip.ok { color:var(--good); border-color:rgba(12,163,12,.4); }
+  .ds-chip.warn { color:var(--warning); border-color:rgba(250,178,25,.4); }
+  .thumbs { display:none; grid-template-columns:repeat(auto-fill,minmax(64px,1fr)); gap:8px; margin-bottom:20px; }
+  .t { aspect-ratio:1; border-radius:8px; border:1px solid var(--ring); }
+  .cap-rows { display:none; margin:6px 0 20px; }
+  .cap-row { display:flex; gap:12px; align-items:center; margin-bottom:10px; }
+  .cap-row .t { width:52px; flex:none; }
+  .cap-row input { flex:1; font:inherit; font-size:13px; background:var(--page); color:var(--ink-2);
+    border:1px solid var(--ring); border-radius:8px; padding:8px 12px; }
+  .trigger-row { display:none; align-items:center; gap:12px; margin-bottom:22px; }
+  .trigger-row label { font-size:13.5px; color:var(--ink-2); }
+  .trigger-row input { font:inherit; background:var(--page); color:var(--ink); border:1px solid var(--ring);
+    border-radius:8px; padding:8px 12px; width:180px; }
+  .coach { font-size:13px; color:var(--muted); border-left:3px solid var(--baseline); padding:8px 14px; margin:14px 0 22px; }
+  /* ── S3 configure ──────────────────────────────────────── */
+  .contract { background:var(--surface-2); border:1px solid var(--ring); border-radius:12px;
+    padding:20px 24px; margin-bottom:18px; font-size:15px; }
+  .contract b { color:var(--accent); }
+  .contract .facts { display:flex; gap:26px; flex-wrap:wrap; margin-top:14px; }
+  .fact .k { font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.8px; }
+  .fact .v { font-size:16px; font-weight:650; }
+  details { margin:4px 0 22px; }
+  summary { cursor:pointer; color:var(--ink-2); font-size:14px; padding:6px 0; }
+  .adv { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:14px; padding:14px 4px 4px; }
+  .adv label { display:block; font-size:12.5px; color:var(--ink-2); }
+  .adv .why { display:block; font-size:11.5px; color:var(--muted); margin-top:2px; }
+  .adv input { width:100%; font:inherit; background:var(--page); color:var(--ink); border:1px solid var(--ring);
+    border-radius:8px; padding:7px 10px; margin-top:5px; }
+  /* ── S4 monitor ────────────────────────────────────────── */
+  .mon-top { display:flex; gap:24px; flex-wrap:wrap; align-items:center; margin-bottom:20px; }
+  .mon-top .fact { min-width:110px; }
+  .stepdown {
+    display:none; border-left:3px solid var(--warning); background:rgba(250,178,25,.08);
+    padding:10px 16px; border-radius:0 8px 8px 0; font-size:13.5px; margin-bottom:18px; color:var(--ink-2);
+  }
+  .stepdown b { color:var(--warning); }
+  .film { display:flex; gap:12px; overflow-x:auto; padding-bottom:6px; margin-bottom:8px; }
+  .frame { flex:none; width:120px; }
+  .frame .img { width:120px; height:120px; border-radius:10px; border:1px solid var(--ring); }
+  .frame .cap { font-size:11.5px; color:var(--muted); text-align:center; margin-top:5px; }
+  .film-hint { font-size:12.5px; color:var(--muted); margin-bottom:16px; }
+  .keep { display:none; margin-bottom:22px; }
+  .charts { display:grid; grid-template-columns:1fr 220px; gap:16px; }
+  @media (max-width:640px){ .charts { grid-template-columns:1fr; } }
+  .panel { background:var(--surface-2); border:1px solid var(--ring); border-radius:12px; padding:16px 18px; }
+  .panel h4 { font-size:13px; color:var(--ink-2); font-weight:600; margin-bottom:10px; }
+  .loss-tip { position:absolute; display:none; background:var(--page); border:1px solid var(--ring);
+    border-radius:8px; padding:6px 10px; font-size:12px; color:var(--ink-2); pointer-events:none; white-space:nowrap; }
+  .meter { height:10px; border-radius:999px; background:var(--page); border:1px solid var(--ring); overflow:hidden; }
+  .meter > i { display:block; height:100%; background:var(--accent); width:0%; transition:width .5s; }
+  .meter-lab { font-size:12.5px; color:var(--ink-2); margin-top:8px; }
+  .meter-num { font-size:22px; font-weight:700; margin-bottom:8px; }
+  /* ── S5 done ───────────────────────────────────────────── */
+  .artifact { display:flex; gap:18px; align-items:center; background:var(--surface-2);
+    border:1px solid var(--ring); border-radius:12px; padding:18px 22px; margin-bottom:20px; flex-wrap:wrap; }
+  .artifact .icon { font-size:34px; }
+  .artifact .name { font-weight:700; font-size:16px; }
+  .artifact .path { font-family:ui-monospace,monospace; font-size:12px; color:var(--muted); }
+  .howto { background:var(--page); border:1px solid var(--ring); border-radius:10px;
+    font-family:ui-monospace,monospace; font-size:13px; color:var(--ink-2);
+    padding:14px 18px; margin:10px 0 20px; position:relative; }
+  .howto .copy { position:absolute; top:8px; right:8px; font-size:11.5px; padding:4px 10px; }
+  .gallery { display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; margin:8px 0 24px; }
+  .gallery .img { aspect-ratio:1; border-radius:10px; border:1px solid var(--ring); }
+  .end-actions { display:flex; gap:12px; flex-wrap:wrap; }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:30px; }
+  /* portrait-ish gradient placeholders */
+  .g1{background:radial-gradient(circle at 35% 30%,#7a6a52,#3b342b 70%);}
+  .g2{background:radial-gradient(circle at 60% 35%,#6f7d8c,#2b3138 70%);}
+  .g3{background:radial-gradient(circle at 45% 40%,#8c6f7d,#382b31 70%);}
+  .g4{background:radial-gradient(circle at 50% 30%,#6f8c7a,#2b382f 70%);}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">LoRA<span>Forge</span></div>
+  <div class="chips" id="chips">
+    <div class="chip active" data-s="0">Hardware</div>
+    <div class="chip" data-s="1">Model</div>
+    <div class="chip" data-s="2">Dataset</div>
+    <div class="chip" data-s="3">Configure</div>
+    <div class="chip" data-s="4">Training</div>
+    <div class="chip" data-s="5">Done</div>
+  </div>
+</header>
+
+<main>
+
+<!-- S0 ─ Hardware -->
+<section id="s0">
+  <div class="step-tag">Step 0 · Hardware check</div>
+  <h2>Let's look at your machine</h2>
+  <p class="sub">LoRAForge checks what your GPU can do <em>before</em> you spend a minute on anything else.
+     Nothing here leaves your computer.</p>
+  <button class="primary" id="probeBtn" onclick="runProbe()">Check my machine</button>
+  <div class="probe-log" id="probeLog"></div>
+  <div class="verdict" id="verdict">
+    <div class="hw-grid">
+      <div class="hw-card"><div class="k">GPU</div><div class="v">RTX 4090</div><div class="n">Ada · sm_89 · FP8 ✓</div></div>
+      <div class="hw-card"><div class="k">VRAM free</div><div class="v">21.3 GB</div><div class="n">of 24 GB (desktop uses 2.7)</div></div>
+      <div class="hw-card"><div class="k">Driver · Torch</div><div class="v">610.53</div><div class="n">torch 2.12 · cu126 ✓</div></div>
+      <div class="hw-card"><div class="k">RAM · Disk</div><div class="v">64 GB</div><div class="n">312 GB free</div></div>
+    </div>
+    <div class="verdict-line">✓ <b>Great news:</b> this machine can train every model LoRAForge offers.</div>
+    <p style="margin-top:18px"><button class="primary" onclick="unlock(1)">Choose a model →</button></p>
+  </div>
+</section>
+
+<!-- S1 ─ Model -->
+<section id="s1" class="locked">
+  <div class="step-tag">Step 1 · Choose a model</div>
+  <h2>What do you want to teach?</h2>
+  <p class="sub">Pick the base model your LoRA will be built on. Cards are matched to <em>your</em> hardware.</p>
+  <div class="models">
+    <div class="model" id="mSDXL" onclick="pickModel('mSDXL','SDXL')">
+      <div class="badge">Recommended for your GPU</div>
+      <div class="thumb g1"></div>
+      <h3>Stable Diffusion XL</h3>
+      <p>The reliable all-rounder. Fast to train, huge community.</p>
+      <div class="meta">7 GB download · ~40 min · free license</div>
+    </div>
+    <div class="model" id="mFLUX" onclick="pickModel('mFLUX','FLUX.1')">
+      <div class="thumb g2"></div>
+      <h3>FLUX.1-dev</h3>
+      <p>Best image quality. Slower, bigger download.</p>
+      <div class="meta">35 GB download · ~90 min · needs free HF licence step</div>
+    </div>
+    <div class="model" id="mSD15" onclick="pickModel('mSD15','SD 1.5')">
+      <div class="thumb g3"></div>
+      <h3>Stable Diffusion 1.5</h3>
+      <p>The lightweight classic. Quickest experiments.</p>
+      <div class="meta">4 GB download · ~20 min · free license</div>
+    </div>
+    <div class="model disabled">
+      <div class="thumb g4"></div>
+      <h3>FLUX.2-dev</h3>
+      <p>Frontier quality.</p>
+      <div class="reason">Needs ~30 GB free VRAM — your card has 21.3 GB. FLUX.1 is your best quality option.</div>
+    </div>
+  </div>
+  <div class="dl" id="dl">
+    <div class="bar"><i id="dlBar"></i></div>
+    <div class="bar-label" id="dlLabel">Downloading…</div>
+  </div>
+</section>
+
+<!-- S2 ─ Dataset -->
+<section id="s2" class="locked">
+  <div class="step-tag">Step 2 · Prepare your photos</div>
+  <h2>Show it what to learn</h2>
+  <p class="sub">This is the step that decides your LoRA's quality — more than any setting later.</p>
+  <div class="coach">💡 15–30 varied photos beat 100 similar ones. Different angles, lighting, and backgrounds; the subject sharp and central.</div>
+  <div class="drop" id="drop" onclick="ingest()">
+    <div style="font-size:30px">📁</div>
+    Drop photos here, or click to browse<br>
+    <span class="hint">(mockup: click to simulate adding 23 photos)</span>
+  </div>
+  <div class="ds-chips" id="dsChips">
+    <div class="ds-chip ok">23 photos — a good amount</div>
+    <div class="ds-chip warn">2 near-duplicates (kept the sharper one)</div>
+    <div class="ds-chip warn">1 photo is very low resolution — excluded</div>
+    <div class="ds-chip ok">Auto-captions written ✓ — edit any below</div>
+  </div>
+  <div class="thumbs" id="thumbs"></div>
+  <div class="trigger-row" id="trigRow">
+    <label>Trigger word <span class="hint">(type this in prompts to summon your subject)</span></label>
+    <input value="ohwx person" />
+  </div>
+  <div class="cap-rows" id="capRows">
+    <div class="cap-row"><div class="t g1"></div><input value="photo of ohwx person smiling outdoors, natural light"></div>
+    <div class="cap-row"><div class="t g2"></div><input value="ohwx person in a blue jacket, city street background"></div>
+    <div class="cap-row"><div class="t g3"></div><input value="close-up portrait of ohwx person, soft indoor lighting"></div>
+  </div>
+  <button class="primary" id="dsNext" style="display:none" onclick="unlock(3)">Dataset looks good →</button>
+</section>
+
+<!-- S3 ─ Configure -->
+<section id="s3" class="locked">
+  <div class="step-tag">Step 3 · Configure &amp; go</div>
+  <h2>We've set everything for your card</h2>
+  <p class="sub">Nothing to fill in. Open “Advanced” only if you want to tinker — every field is pre-set to safe values.</p>
+  <div class="contract">
+    Training <b id="cModel">SDXL</b> · preset <b>standard</b>, sized for your RTX 4090.
+    <div class="facts">
+      <div class="fact"><div class="k">Est. time</div><div class="v">~40 min</div></div>
+      <div class="fact"><div class="k">VRAM needed</div><div class="v">10.5 GB <span class="hint">of 21.3 free ✓</span></div></div>
+      <div class="fact"><div class="k">Disk</div><div class="v">1.8 GB</div></div>
+      <div class="fact"><div class="k">Previews</div><div class="v">every 200 steps</div></div>
+    </div>
+  </div>
+  <details>
+    <summary>Advanced settings (pre-filled with the preset)</summary>
+    <div class="adv">
+      <div><label>Detail capacity (rank)<span class="why">How much detail the LoRA can hold. 16 suits most subjects.</span></label><input value="16"></div>
+      <div><label>Learning rate<span class="why">How boldly it learns. Higher = faster but riskier.</span></label><input value="0.0001"></div>
+      <div><label>Steps<span class="why">How long it studies. More isn't always better — watch the previews.</span></label><input value="1500"></div>
+      <div><label>Resolution<span class="why">Training image size. The preset matches your VRAM.</span></label><input value="1024"></div>
+    </div>
+  </details>
+  <button class="primary" style="font-size:16px; padding:13px 30px" onclick="startTraining()">▶ Start training</button>
+</section>
+
+<!-- S4 ─ Monitor -->
+<section id="s4" class="locked">
+  <div class="step-tag">Step 4 · Training</div>
+  <h2>Watch it learn</h2>
+  <p class="sub">The previews below are the real signal — when they look right, you can stop early and keep the best version.</p>
+  <div class="mon-top">
+    <div class="fact"><div class="k">Progress</div><div class="v" id="prog">0%</div></div>
+    <div class="fact"><div class="k">Step</div><div class="v" id="stepN">0 / 1500</div></div>
+    <div class="fact"><div class="k">Time left</div><div class="v" id="eta">—</div></div>
+    <div style="flex:1; min-width:200px"><div class="bar"><i id="trainBar"></i></div></div>
+  </div>
+  <div class="stepdown" id="stepdown">
+    <b>Adjusted automatically:</b> training ran out of memory, so we're keeping more of the model in your
+    computer's RAM. Slower, <em>not</em> worse — quality is unaffected. <span class="hint">(retry 1 of 2)</span>
+  </div>
+  <h4 style="font-size:13px;color:var(--ink-2);margin-bottom:8px">Sample previews — “photo of ohwx person”</h4>
+  <div class="film" id="film"></div>
+  <div class="film-hint">New preview every 200 steps. Sharpening likeness = learning. Weird artifacts = overtraining.</div>
+  <div class="keep" id="keep">
+    <button class="primary" onclick="finish(true)">✋ Looks good — stop &amp; keep this version</button>
+    <span class="hint" style="margin-left:10px">Stopping early is often the <em>right</em> call.</span>
+  </div>
+  <div class="charts">
+    <div class="panel" style="position:relative">
+      <h4>Training loss (smoothed) — for the curious, previews matter more</h4>
+      <svg id="lossSvg" viewBox="0 0 520 170" width="100%" height="170" aria-label="Training loss chart"></svg>
+      <div class="loss-tip" id="lossTip"></div>
+    </div>
+    <div class="panel">
+      <h4>VRAM in use</h4>
+      <div class="meter-num" id="vramNum">— GB</div>
+      <div class="meter"><i id="vramBar"></i></div>
+      <div class="meter-lab">of 24 GB · headroom healthy</div>
+    </div>
+  </div>
+</section>
+
+<!-- S5 ─ Done -->
+<section id="s5" class="locked">
+  <div class="step-tag">Step 5 · Finished</div>
+  <h2 id="doneTitle">Your LoRA is ready 🎉</h2>
+  <p class="sub" id="doneSub">Trained on 23 photos · stopped at step 1200 of 1500 · 34 minutes.</p>
+  <div class="artifact">
+    <div class="icon">🧬</div>
+    <div style="flex:1">
+      <div class="name">ohwx-person-sdxl.safetensors</div>
+      <div class="path">outputs/sdxl-character/ohwx-person-sdxl.safetensors · 36 MB</div>
+    </div>
+    <button class="primary">⬇ Download LoRA</button>
+  </div>
+  <h4 style="font-size:14px;margin-bottom:2px">How to use it</h4>
+  <p class="hint">Drop the file into ComfyUI's <code>models/loras</code> (or A1111's <code>models/Lora</code>), then prompt:</p>
+  <div class="howto">
+    photo of <b style="color:var(--accent)">ohwx person</b> as an astronaut, detailed, studio lighting
+    &lt;lora:ohwx-person-sdxl:0.8&gt;
+    <button class="copy" onclick="this.textContent='Copied ✓'">Copy</button>
+  </div>
+  <h4 style="font-size:14px;margin-bottom:8px">Test generations</h4>
+  <div class="gallery">
+    <div class="img g1"></div><div class="img g2"></div><div class="img g3"></div><div class="img g4"></div>
+  </div>
+  <div class="end-actions">
+    <button class="primary" onclick="location.reload()">Train another</button>
+    <button onclick="unlock(3);document.getElementById('s3').scrollIntoView({behavior:'smooth'})">Tweak &amp; retrain this one</button>
+  </div>
+</section>
+
+</main>
+<footer>LoRAForge UX mockup — all data simulated · click through from the top</footer>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const chips = [...document.querySelectorAll('.chip')];
+  let unlocked = 0;
+
+  function unlock(n){
+    unlocked = Math.max(unlocked, n);
+    const sec = $('s'+n);
+    sec.classList.remove('locked');
+    chips.forEach((c,i)=>{
+      c.classList.toggle('active', i===n);
+      c.classList.toggle('done', i<n);
+    });
+    setTimeout(()=>sec.scrollIntoView({behavior:'smooth', block:'start'}), 120);
+  }
+  chips.forEach((c,i)=>c.onclick=()=>{ if(i<=unlocked) $('s'+i).scrollIntoView({behavior:'smooth'}); });
+
+  /* S0 probe */
+  function runProbe(){
+    $('probeBtn').disabled = true;
+    const log = $('probeLog'); log.style.display='block';
+    const lines = ['→ probing GPU via NVML…','→ reading driver + CUDA runtime…','→ checking torch build…','→ measuring free VRAM, RAM, disk…','✓ diagnostics complete'];
+    let i=0;
+    const t = setInterval(()=>{
+      log.textContent += (i?'\n':'') + lines[i];
+      if(++i===lines.length){ clearInterval(t); setTimeout(()=>{ $('verdict').style.display='block'; }, 350); }
+    }, 380);
+  }
+
+  /* S1 model select + download sim */
+  function pickModel(id, name){
+    ['mSDXL','mFLUX','mSD15'].forEach(m=>$(m).classList.toggle('selected', m===id));
+    $('cModel').textContent = name;
+    const dl = $('dl'); dl.style.display='block';
+    let p = 0; $('dlBar').style.width='0%';
+    const t = setInterval(()=>{
+      p = Math.min(100, p + 9 + Math.random()*12);
+      $('dlBar').style.width = p+'%';
+      $('dlLabel').textContent = p<100 ? `Downloading ${name} weights — ${Math.round(p)}% (reusing what your other tools already have)` : `✓ ${name} ready (cached for next time)`;
+      if(p>=100){ clearInterval(t); setTimeout(()=>unlock(2), 500); }
+    }, 200);
+  }
+
+  /* S2 dataset sim */
+  function ingest(){
+    $('drop').style.display='none';
+    const th = $('thumbs'); th.style.display='grid';
+    const gs = ['g1','g2','g3','g4'];
+    for(let i=0;i<20;i++){ const d=document.createElement('div'); d.className='t '+gs[i%4]; th.appendChild(d); }
+    $('dsChips').style.display='flex';
+    $('trigRow').style.display='flex';
+    $('capRows').style.display='block';
+    $('dsNext').style.display='inline-block';
+  }
+
+  /* S4 training sim */
+  const TOTAL=1500, frames=$('film'), lossPts=[];
+  function startTraining(){
+    unlock(4);
+    let step=0, vram=10.5;
+    addFrame(0, 14);
+    const t=setInterval(()=>{
+      step=Math.min(TOTAL, step+38);
+      const pct=step/TOTAL*100;
+      $('trainBar').style.width=pct+'%';
+      $('prog').textContent=Math.round(pct)+'%';
+      $('stepN').textContent=`${step} / ${TOTAL}`;
+      $('eta').textContent=step>=TOTAL?'done':Math.ceil((TOTAL-step)/38*0.35/0.6)+' min';
+      vram=10.5+Math.sin(step/90)*0.6;
+      $('vramNum').textContent=vram.toFixed(1)+' GB';
+      $('vramBar').style.width=(vram/24*100)+'%';
+      // loss: noisy exponential decay
+      lossPts.push(0.16*Math.exp(-step/650)+0.035+(Math.random()-0.5)*0.008);
+      drawLoss();
+      if(step===380) $('stepdown').style.display='block';           // demo the friendly step-down banner
+      if(step===760) $('stepdown').style.display='none';
+      if(step%200<38 && step>0) addFrame(step, Math.max(0,14-step/110));
+      if(step>=600) $('keep').style.display='block';
+      if(step>=TOTAL){ clearInterval(t); finish(false); }
+    },350);
+  }
+  function addFrame(step, blur){
+    const f=document.createElement('div'); f.className='frame';
+    f.innerHTML=`<div class="img g1" style="width:120px;height:120px;border-radius:10px;border:1px solid var(--ring);filter:blur(${blur}px) saturate(${1+ (14-blur)/20})"></div><div class="cap">step ${step||'0 (start)'}</div>`;
+    frames.appendChild(f); frames.scrollLeft=frames.scrollWidth;
+  }
+  /* single-series loss line — thin 2px stroke, hairline grid, hover tooltip */
+  function drawLoss(){
+    const svg=$('lossSvg'), W=520,H=170,P=28;
+    const max=0.2,min=0.02;
+    const pts=lossPts.map((v,i)=>{
+      const x=P+(W-P-8)*(i/(TOTAL/38));
+      const y=H-P-(H-P-14)*((v-min)/(max-min));
+      return [x,y,v,i*38];
+    });
+    let grid='';
+    for(let g=0;g<4;g++){const y=14+(H-P-14)*g/3;grid+=`<line x1="${P}" y1="${y}" x2="${W-8}" y2="${y}" stroke="var(--grid)" stroke-width="1"/>`;}
+    const path=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+    svg.innerHTML=grid
+      +`<line x1="${P}" y1="${H-P}" x2="${W-8}" y2="${H-P}" stroke="var(--baseline)"/>`
+      +`<text x="${P-6}" y="${H-P+4}" fill="var(--muted)" font-size="10" text-anchor="end">0.02</text>`
+      +`<text x="${P-6}" y="18" fill="var(--muted)" font-size="10" text-anchor="end">0.20</text>`
+      +`<path d="${path}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>`;
+    svg.onmousemove=e=>{
+      const r=svg.getBoundingClientRect(), mx=(e.clientX-r.left)*(W/r.width);
+      const p=pts.reduce((a,b)=>Math.abs(b[0]-mx)<Math.abs(a[0]-mx)?b:a,pts[0]);
+      const tip=$('lossTip'); tip.style.display='block';
+      tip.style.left=(e.clientX-r.left+14)+'px'; tip.style.top=(e.clientY-r.top-10)+'px';
+      tip.textContent=`step ${p[3]} · loss ${p[2].toFixed(3)}`;
+    };
+    svg.onmouseleave=()=>$('lossTip').style.display='none';
+  }
+  function finish(early){
+    if(early){
+      $('doneTitle').textContent='Your LoRA is ready 🎉 (stopped early — smart move)';
+      $('doneSub').textContent='Trained on 23 photos · you kept the version that looked right · quality over quantity.';
+    }
+    unlock(5);
+  }
+</script>
+</body>
+</html>
