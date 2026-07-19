@@ -3,15 +3,17 @@
 .env
 .env.*
 
-# Training data & results (may contain real people's photos)
-datasets/
-outputs/
+# Training data & results (may contain real people's photos).
+# Anchored to the repo root: an unanchored `datasets/` once swallowed the
+# src/loraforge/datasets package and broke every clone.
+/datasets/
+/outputs/
 
 # Model weights / caches (huge, re-downloadable)
-models/
+/models/
 *.safetensors
 *.ckpt
-hf_cache/
+/hf_cache/
 
 # ── Python housekeeping ──────────────────────────────────────
 __pycache__/

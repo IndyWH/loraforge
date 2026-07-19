@@ -81,8 +81,10 @@ close-while-training dialog promises to protect. The fallback should be
 logged as abnormal, not routine (it also covers a truly stalled HF thread).
 
 Close-while-training (product decision, settled): intercept the window
-close event; ask the server whether a job is running (existing `/jobs`
-list). If yes, native confirm dialog: "Training is running — closing
+close event; ask the server whether a job is running — any entry of the
+existing `/jobs` list in a non-terminal state (the list retains finished
+runs, so "non-empty" alone would nag after every completed job).
+If yes, native confirm dialog: "Training is running — closing
 LoRAForge will stop it. Progress up to the last checkpoint is kept."
 Confirm → normal shutdown sequence (job cancel is inside it). Decline →
 window stays. If no job is running, close immediately through the same
@@ -108,7 +110,8 @@ duplicate sidecars entirely.
 
 Spawn/handshake/tee, close interception + confirm dialog, shutdown-then-
 force-kill, single instance, splash/error pages. No business logic, no
-job state interpretation beyond "is the jobs list non-empty".
+job state interpretation beyond "is any job in a non-terminal state"
+(the /jobs list retains finished runs).
 
 ## Packaging & CI
 
