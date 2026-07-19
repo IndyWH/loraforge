@@ -188,3 +188,14 @@ force-kill of the process group/Job Object comes only after a 25s wait
 (the Python cancel path has its own 10s terminate→kill grace before the
 exit flag flips) and only as a logged fallback. Preferred port 8471,
 ephemeral fallback.
+
+## 19. Engine breakage is repaired as data, and every real-world crash buys a named error
+
+`extra_pins` on the EngineSpec corrects upstream requirement drift
+(numpy<2, bitsandbytes==0.49.2 — exact pins per decision 14), recorded in
+the state file so existing installs self-repair on the next `setup`. The
+kohya adapter owns engine-specific path materialization
+(extension-sensitive loader); the downloader stays engine-agnostic. Every
+failure reaching the generic exit-code message means a fatal marker is
+missing — the marker table grows with each diagnosed crash, tests pinning
+the actionable words.
