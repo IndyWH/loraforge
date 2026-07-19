@@ -516,3 +516,38 @@ def test_engine_diagnosis_replaces_bare_exit_code(tmp_path: Path) -> None:
         assert str(job.log_path) in final.message  # raw lines still findable
 
     asyncio.run(scenario())
+
+
+def test_abandoned_job_swept_to_failed_on_boot(tmp_path: Path) -> None:
+    # A server killed mid-run leaves job.json frozen in "running"; the next
+    # boot must fail it forward — the UI never shows stale training state.
+    jobs_root = tmp_path / "jobs"
+    workdir = jobs_root / "abcdef123456"
+    workdir.mkdir(parents=True)
+    stale = {
+        "id": "abcdef123456",
+        "name": "test-run",
+        "model": "sdxl",
+        "state": "running",
+        "recipe": make_recipe(tmp_path).model_dump(mode="json"),
+        "state_history": [
+            {"state": "queued", "at": "2026-07-19T10:00:00+00:00", "message": None},
+            {"state": "running", "at": "2026-07-19T10:00:01+00:00", "message": None},
+        ],
+        "stepdowns": [],
+        "log_path": str(workdir / "job.log"),
+        "artifact": None,
+        "error": None,
+    }
+    (workdir / "job.json").write_text(json.dumps(stale), encoding="utf-8")
+
+    JobRunner(FakeAdapter(), jobs_root)  # boot = sweep
+
+    swept = json.loads((workdir / "job.json").read_text(encoding="utf-8"))
+    assert swept["state"] == "failed"
+    assert "closed while this job was running" in swept["error"]
+    assert "did not finish" in swept["error"]
+    # the rest of the record survives for the history view
+    assert swept["name"] == "test-run"
+    assert [h["state"] for h in swept["state_history"]] == ["queued", "running", "failed"]
+    assert swept["state_history"][-1]["message"] == swept["error"]

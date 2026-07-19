@@ -196,6 +196,34 @@ class JobRunner:
         self._jobs: dict[str, Job] = {}
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
         self._worker: asyncio.Task[None] | None = None
+        self._sweep_abandoned()
+
+    def _sweep_abandoned(self) -> None:
+        """Fail-forward records a killed server left frozen mid-run.
+
+        A job.json stuck in a non-terminal state with no process behind it
+        would make the UI show training running forever. Rule 5's spirit: the
+        app must never present stale state — there is no reset button, so the
+        record is rewritten as failed (history preserved) at startup.
+        """
+        terminal = {state.value for state in TERMINAL_STATES}
+        for record_path in self.jobs_root.glob("*/job.json"):
+            try:
+                record = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue  # unreadable record; nothing safe to rewrite
+            if record.get("state") in terminal:
+                continue
+            message = (
+                "LoRAForge was closed while this job was running; it did not "
+                "finish. Start the job again when you're ready."
+            )
+            record["state"] = JobState.FAILED.value
+            record["error"] = message
+            record.setdefault("state_history", []).append(
+                {"state": JobState.FAILED.value, "at": _now(), "message": message}
+            )
+            record_path.write_text(json.dumps(record, indent=2), encoding="utf-8")
 
     # ── Public API (what the FastAPI layer will wrap) ────────────────────────
 

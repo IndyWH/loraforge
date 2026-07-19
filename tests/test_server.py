@@ -487,6 +487,35 @@ def test_control_shutdown_cancels_the_running_job_then_flips_the_hook(tmp_path) 
     assert calls == [True]  # exit flag flipped only after the jobs were stopped
 
 
+def test_stale_running_record_served_as_failed_after_restart(tmp_path) -> None:
+    # A killed server leaves job.json frozen mid-run; a fresh boot (runner
+    # construction) must sweep it so /jobs never shows training running
+    # with no process behind it.
+    workdir = tmp_path / "jobs" / "cafe0123beef"
+    workdir.mkdir(parents=True)
+    (workdir / "job.json").write_text(
+        json.dumps(
+            {
+                "id": "cafe0123beef",
+                "name": "interrupted-run",
+                "model": "sdxl",
+                "state": "running",
+                "state_history": [{"state": "running", "at": "t", "message": None}],
+                "stepdowns": [],
+                "artifact": None,
+                "error": None,
+            }
+        ),
+        encoding="utf-8",
+    )
+    client, _ = make_client(tmp_path)  # boots the runner → sweep
+    with client:
+        [record] = client.get("/jobs").json()
+    assert record["state"] == "failed"
+    assert "closed while this job was running" in record["error"]
+    assert record["name"] == "interrupted-run"  # history preserved
+
+
 def test_submit_refused_maps_to_409_with_the_fix(tmp_path) -> None:
     from test_job_runner import BrokenEnvAdapter
 
