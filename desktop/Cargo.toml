@@ -1,6 +1,6 @@
 # Workspace for the desktop shell. `sidecar` is the process-lifecycle library
-# (no Tauri dependency — testable without webkit); the Tauri app crate
-# (`src-tauri`) joins in the windows/dialogs stage.
+# (no Tauri dependency — testable without webkit); `src-tauri` is the thin
+# Tauri app (needs webkit2gtk dev packages to build on Linux, see CLAUDE.md).
 [workspace]
 resolver = "2"
-members = ["sidecar"]
+members = ["sidecar", "src-tauri"]

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LoRAForge</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center;
+    background: #14161b; color: #fafaf9;
+    font: 15px/1.5 system-ui, "Segoe UI", sans-serif;
+  }
+  .card { text-align: center; }
+  .mark {
+    width: 64px; height: 64px; margin: 0 auto 18px;
+    background: #1c1f26; border-radius: 14px;
+    display: grid; place-items: center;
+  }
+  .spark {
+    width: 26px; height: 40px; background: #f59e0b;
+    clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+    animation: pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes pulse { 50% { opacity: 0.45; transform: scale(0.92); } }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 6px; }
+  p { margin: 0; color: #a1a1aa; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="mark"><div class="spark"></div></div>
+    <h1>LoRAForge</h1>
+    <p>Starting the local server…</p>
+    <p>The first run can take a little longer.</p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>LoRAForge — server failed to start</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: #14161b; color: #fafaf9;
+    font: 15px/1.5 system-ui, "Segoe UI", sans-serif;
+    display: grid; place-items: center;
+  }
+  main { max-width: 720px; width: calc(100% - 64px); }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  h1::before { content: "⚠ "; color: #f59e0b; }
+  #message { color: #fca5a5; margin: 0 0 16px; overflow-wrap: anywhere; }
+  .logrow { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .logrow input {
+    flex: 1; background: #1c1f26; color: #a1a1aa; border: 1px solid #2b2f3a;
+    border-radius: 6px; padding: 6px 10px; font: 13px ui-monospace, monospace;
+  }
+  button {
+    background: #2b2f3a; color: #fafaf9; border: 0; border-radius: 6px;
+    padding: 7px 14px; font: inherit; cursor: pointer;
+  }
+  button:hover { background: #3a3f4d; }
+  pre {
+    background: #101216; border: 1px solid #2b2f3a; border-radius: 8px;
+    padding: 12px; max-height: 320px; overflow: auto;
+    font: 12px/1.45 ui-monospace, monospace; color: #d4d4d8;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .hint { color: #a1a1aa; font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>The local server failed to start</h1>
+  <p id="message"></p>
+  <div class="logrow" id="logrow" hidden>
+    <input id="logpath" readonly />
+    <button id="copy">Copy log path</button>
+  </div>
+  <pre id="tail" hidden></pre>
+  <p class="hint">Attach the log (and the output of <code>loraforge diagnose</code>)
+  when reporting this.</p>
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  document.getElementById("message").textContent =
+    params.get("message") || "Unknown error.";
+  const log = params.get("log");
+  if (log) {
+    document.getElementById("logrow").hidden = false;
+    document.getElementById("logpath").value = log;
+  }
+  const tail = params.get("tail");
+  if (tail) {
+    const pre = document.getElementById("tail");
+    pre.hidden = false;
+    pre.textContent = tail;
+  }
+  document.getElementById("copy").addEventListener("click", async () => {
+    const input = document.getElementById("logpath");
+    input.select();
+    try { await navigator.clipboard.writeText(input.value); }
+    catch { document.execCommand("copy"); }
+  });
+</script>
+</body>
+</html>

@@ -461,14 +461,14 @@ fn spawn_in_own_group(cmd: &ServerCommand) -> std::io::Result<Child> {
     command.spawn()
 }
 
-// ── Shutdown request ─────────────────────────────────────────────────────────
+// ── Loopback HTTP ────────────────────────────────────────────────────────────
 
-/// Minimal loopback HTTP: POST /control/shutdown, expect 202. A hand-rolled
-/// request keeps the crate dependency-free here — plain HTTP/1.1 to
-/// 127.0.0.1, no TLS, no redirects, and the only thing read is the status
-/// line.
-fn post_shutdown(url: &str) -> std::io::Result<bool> {
-    let authority = authority_of(url);
+/// Minimal hand-rolled loopback HTTP/1.1 — keeps the crate dependency-free.
+/// Plain HTTP to 127.0.0.1, no TLS, no redirects, no chunked handling
+/// (uvicorn answers loopback JSON with Content-Length). Used for the
+/// shutdown POST and the shell's "is training running" GET.
+fn loopback_request(base_url: &str, method: &str, path: &str) -> std::io::Result<String> {
+    let authority = authority_of(base_url);
     // connect_timeout, not connect: some stacks (WSL2 mirrored networking)
     // let a dead loopback port hang instead of refusing, and an unbounded
     // connect here would eat the whole shutdown-wait budget.
@@ -479,12 +479,29 @@ fn post_shutdown(url: &str) -> std::io::Result<bool> {
     let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;
     stream.set_write_timeout(Some(Duration::from_secs(3)))?;
-    write!(
-        stream,
-        "POST /control/shutdown HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-    )?;
+    // One write_all of a prebuilt string: write!() would emit each format
+    // fragment as its own tiny TCP segment.
+    let request = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes())?;
     let mut response = String::new();
     let _ = stream.read_to_string(&mut response); // server closes; timeout caps it
+    Ok(response)
+}
+
+/// GET a path from the server and return the response body.
+pub fn loopback_get(base_url: &str, path: &str) -> std::io::Result<String> {
+    let response = loopback_request(base_url, "GET", path)?;
+    Ok(response
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body.to_string())
+        .unwrap_or_default())
+}
+
+/// POST /control/shutdown, true iff the server answered 202.
+fn post_shutdown(url: &str) -> std::io::Result<bool> {
+    let response = loopback_request(url, "POST", "/control/shutdown")?;
     Ok(response
         .lines()
         .next()

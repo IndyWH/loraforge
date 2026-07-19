@@ -189,6 +189,8 @@ npm run typecheck && npm test && npm run build
 cd desktop && cargo test    # desktop shell: sidecar lifecycle tests (no webkit needed)
 cargo test -- --ignored     # + the full contract against the real python server
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
+cargo install tauri-cli --version '^2' --locked
+cargo tauri dev             # run the desktop shell (needs the webkit deps below)
 ```
 
 Desktop shell (Tauri v2) Linux/WSL build deps — needed for `tauri dev`/`tauri

@@ -72,14 +72,22 @@ fn graceful_shutdown_when_server_honors_the_request() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let flag_for_listener = flag.clone();
-    let accept = std::thread::spawn(move || {
+    let accept = std::thread::spawn(move || loop {
         let (mut conn, _) = listener.accept().unwrap();
         let mut buf = [0u8; 1024];
-        let n = conn.read(&mut buf).unwrap();
-        assert!(String::from_utf8_lossy(&buf[..n]).starts_with("POST /control/shutdown"));
+        let n = conn.read(&mut buf).unwrap_or(0);
+        if n == 0 {
+            continue; // WSL2's localhost relay probes fresh listeners with empty connects
+        }
+        let request = String::from_utf8_lossy(&buf[..n]);
+        assert!(
+            request.starts_with("POST /control/shutdown"),
+            "unexpected request: {request}"
+        );
         fs::write(&flag_for_listener, "").unwrap();
         conn.write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .unwrap();
+        break;
     });
 
     let script = format!(

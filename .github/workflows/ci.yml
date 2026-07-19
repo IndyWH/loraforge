@@ -57,3 +57,67 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  desktop:
+    name: desktop / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux webview build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl \
+            wget file libxdo-dev libssl-dev libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test
+
+      # Bundling is main-only to save minutes; PRs still compile the app
+      # crate via clippy/test above. Artifacts: NSIS .exe (Windows),
+      # .deb + AppImage (Linux). No release process yet.
+      - name: Install tauri-cli
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cargo install tauri-cli --version '^2' --locked
+
+      - name: Bundle (Linux)
+        if: runner.os == 'Linux' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cargo tauri build --bundles deb,appimage
+
+      - name: Bundle (Windows)
+        if: runner.os == 'Windows' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cargo tauri build --bundles nsis
+
+      - name: Upload bundles
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: loraforge-desktop-${{ matrix.os }}
+          path: |
+            desktop/target/release/bundle/deb/*.deb
+            desktop/target/release/bundle/appimage/*.AppImage
+            desktop/target/release/bundle/nsis/*.exe
+          if-no-files-found: error

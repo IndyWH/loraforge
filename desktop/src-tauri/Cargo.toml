@@ -1,0 +1,18 @@
+[package]
+name = "loraforge-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "LoRAForge desktop shell — a thin Tauri window over the local server"
+
+# Tauri crates pinned to their minor line (decision 14: single-maintainer-
+# adjacent ecosystem caution — upgrades are deliberate, tested bumps).
+[build-dependencies]
+tauri-build = "~2.6"
+
+[dependencies]
+loraforge-sidecar = { path = "../sidecar" }
+serde_json = "1"
+tauri = "~2.11"
+tauri-plugin-dialog = "~2.7"
+tauri-plugin-single-instance = "~2.4"
