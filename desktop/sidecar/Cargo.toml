@@ -1,0 +1,28 @@
+[package]
+name = "loraforge-sidecar"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Sidecar lifecycle for the LoRAForge desktop shell: spawn, ready handshake, log tee, ordered shutdown"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+shlex = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.60", features = [
+    "Win32_Foundation",
+    "Win32_Security",          # CreateJobObjectW's SECURITY_ATTRIBUTES param
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",  # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(unix)'.dev-dependencies]
+libc = "0.2"

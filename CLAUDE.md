@@ -185,6 +185,18 @@ uv run loraforge serve      # API + web UI at http://127.0.0.1:8471
 cd ui && npm install
 npm run dev                 # UI dev server on 5173 (API must be running)
 npm run typecheck && npm test && npm run build
+
+cd desktop && cargo test    # desktop shell: sidecar lifecycle tests (no webkit needed)
+cargo test -- --ignored     # + the full contract against the real python server
+cargo fmt --check && cargo clippy --all-targets -- -D warnings
+```
+
+Desktop shell (Tauri v2) Linux/WSL build deps — needed for `tauri dev`/`tauri
+build` (the app crate), NOT for the sidecar tests above:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+  libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
 ```
 
 ## Testing conventions
@@ -194,5 +206,6 @@ npm run typecheck && npm test && npm run build
   Windows paths can't corrupt TOML, that OOM is detected from real lines.
 - Fake hardware via `fake_report()` in tests/test_capability.py — add new
   cards there. Never require a real GPU for the unit suite.
-- Keep the suite fast (<1s). GPU/integration tests live elsewhere (later,
-  behind a marker), so `uv run pytest` stays instant on CI.
+- Keep the suite fast (<1s aspirational; ~1.1s as of the server control
+  endpoints). GPU/integration tests live elsewhere (later, behind a
+  marker), so `uv run pytest` stays instant on CI.

@@ -34,3 +34,7 @@ Thumbs.db
 # Web UI
 ui/node_modules/
 ui/dist/
+
+# Desktop shell (Rust/Tauri)
+desktop/target/
+desktop/gen/
