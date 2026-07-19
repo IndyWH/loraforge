@@ -8,11 +8,11 @@ description = "LoRAForge desktop shell — a thin Tauri window over the local se
 # Tauri crates pinned to their minor line (decision 14: single-maintainer-
 # adjacent ecosystem caution — upgrades are deliberate, tested bumps).
 [build-dependencies]
-tauri-build = "~2.6"
+tauri-build = { version = "~2.6", features = [] }
 
 [dependencies]
 loraforge-sidecar = { path = "../sidecar" }
 serde_json = "1"
-tauri = "~2.11"
+tauri = { version = "~2.11", features = [] }
 tauri-plugin-dialog = "~2.7"
 tauri-plugin-single-instance = "~2.4"

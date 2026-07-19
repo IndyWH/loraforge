@@ -9,8 +9,10 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from loraforge.engines.base import LaunchPlan, ProgressEvent, TrainResult
-from loraforge.jobs.runner import JobEvent, JobRunner, JobState
+from loraforge.jobs.runner import JobEvent, JobRunner, JobState, SubmitRefused
 from loraforge.jobs.stepdown import step_down
 from loraforge.recipes.schema import Recipe
 
@@ -162,7 +164,7 @@ def test_oom_steps_down_and_succeeds(tmp_path: Path) -> None:
             "queued", "preparing", "running", "oom_stepdown", "preparing", "running", "completed",
         ]
         assert first.terminated  # the OOM'd process tree was shut down
-        assert adapter.compiled[1].train.blocks_to_swap == 18  # flux: block swap first
+        assert adapter.compiled[-1].train.blocks_to_swap == 18  # flux: block swap first
         # attempt 1 stops at the OOM line ("step 2" is never parsed); attempt 2 runs to the end
         steps = [e.progress.step for e in events if e.kind == "progress" and e.progress.step]
         assert steps == [1, 10]
@@ -398,3 +400,119 @@ def test_ladder_block_swap_respects_batch_size_rule(tmp_path: Path) -> None:
     assert stepped.recipe.train.blocks_to_swap == 18
     assert stepped.recipe.train.batch_size == 2
     assert "atch size" in stepped.message  # tells the user about the extra change
+
+
+# ── Rule 5 at the runner: refuse early, never leak raw errors ────────────────
+
+
+class BrokenEnvAdapter(FakeAdapter):
+    """An adapter whose engine environment is not installed."""
+
+    def check_environment(self, env_dir: Path | None = None) -> list[str]:
+        return ["engine environment incomplete: accelerate missing"]
+
+
+class MissingModelAdapter(FakeAdapter):
+    def compile(self, recipe: Recipe, workdir: Path) -> LaunchPlan:
+        raise ValueError(
+            "base model for 'sdxl' has not been downloaded yet — "
+            "run the model download step first"
+        )
+
+
+def test_submit_refused_before_any_job_when_engine_missing(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        runner = JobRunner(BrokenEnvAdapter(), tmp_path / "jobs", spawn=FakeSpawner())
+        with pytest.raises(SubmitRefused) as excinfo:
+            await runner.submit(make_recipe(tmp_path))
+        message = str(excinfo.value)
+        assert "isn't set up" in message
+        assert "loraforge setup" in message  # names the fix
+        assert not list((tmp_path / "jobs").glob("*"))  # refused BEFORE job creation
+
+    asyncio.run(scenario())
+
+
+def test_submit_refused_when_model_files_missing(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        runner = JobRunner(MissingModelAdapter(), tmp_path / "jobs", spawn=FakeSpawner())
+        with pytest.raises(SubmitRefused) as excinfo:
+            await runner.submit(make_recipe(tmp_path))
+        assert "download" in str(excinfo.value)  # compile's human message, verbatim
+        assert not list((tmp_path / "jobs").glob("*"))
+
+    asyncio.run(scenario())
+
+
+def test_spawn_failure_speaks_human_and_logs_the_raw_error(tmp_path: Path) -> None:
+    async def exploding_spawn(plan: LaunchPlan) -> FakeProcess:
+        raise FileNotFoundError(2, "No such file or directory", plan.argv[0])
+
+    async def scenario() -> None:
+        runner = JobRunner(FakeAdapter(), tmp_path, spawn=exploding_spawn)
+        job = await runner.submit(make_recipe(tmp_path))
+        events = await asyncio.wait_for(drain(runner, job.id), timeout=5)
+        await runner.close()
+
+        final = events[-1]
+        assert final.state is JobState.FAILED
+        assert "loraforge setup" in final.message  # the next step, in the message
+        assert "Errno" not in final.message  # raw errno never reaches the UI
+        assert "Errno" in job.log_path.read_text(encoding="utf-8")  # ...but is kept
+
+    asyncio.run(scenario())
+
+
+def test_unexpected_error_is_wrapped_and_logged(tmp_path: Path) -> None:
+    class ExplodingAdapter(FakeAdapter):
+        def parse_line(self, line: str) -> ProgressEvent | None:
+            raise RuntimeError("[Errno 2] No such file or directory: 'weights.bin'")
+
+    async def scenario() -> None:
+        runner = JobRunner(
+            ExplodingAdapter(), tmp_path, spawn=FakeSpawner(FakeProcess(["step 1/10\n"]))
+        )
+        job = await runner.submit(make_recipe(tmp_path))
+        events = await asyncio.wait_for(drain(runner, job.id), timeout=5)
+        await runner.close()
+
+        final = events[-1]
+        assert final.state is JobState.FAILED
+        assert "Errno" not in final.message
+        assert "not your settings" in final.message  # what happened, human-worded
+        assert "loraforge diagnose" in final.message  # and what to do next
+        assert str(job.log_path) in final.message  # where the raw detail lives
+        assert "Errno 2" in job.log_path.read_text(encoding="utf-8")
+
+    asyncio.run(scenario())
+
+
+def test_engine_diagnosis_replaces_bare_exit_code(tmp_path: Path) -> None:
+    class HintingAdapter(FakeAdapter):
+        def parse_line(self, line: str) -> ProgressEvent | None:
+            if "multiarray failed" in line:
+                return ProgressEvent(
+                    message=line.strip(),
+                    fatal_hint=(
+                        "The training engine's Python packages are mismatched — "
+                        "run `loraforge setup` to repair them."
+                    ),
+                )
+            return super().parse_line(line)
+
+    async def scenario() -> None:
+        doomed = FakeProcess(
+            ["ImportError: numpy.core.multiarray failed to import\n"], returncode=1
+        )
+        runner = JobRunner(HintingAdapter(), tmp_path, spawn=FakeSpawner(doomed))
+        job = await runner.submit(make_recipe(tmp_path))
+        events = await asyncio.wait_for(drain(runner, job.id), timeout=5)
+        await runner.close()
+
+        final = events[-1]
+        assert final.state is JobState.FAILED
+        assert "loraforge setup" in final.message  # diagnosis, not a bare exit code
+        assert "exited with code" not in final.message
+        assert str(job.log_path) in final.message  # raw lines still findable
+
+    asyncio.run(scenario())

@@ -119,6 +119,12 @@ export function DiagnoseSection(props: {
             </div>
           )}
 
+          {!d.engine.ready && (
+            <p className="hint" style={{ marginTop: 10 }}>
+              ⚠ The training engine isn't installed yet — run <code>loraforge setup</code> in a
+              terminal, then run the check again. ({d.engine.problems[0]})
+            </p>
+          )}
           {d.capabilities.warnings.map((w) => (
             <p key={w} className="hint" style={{ marginTop: 10 }}>
               {w}

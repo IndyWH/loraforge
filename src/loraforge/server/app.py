@@ -30,6 +30,7 @@ from pydantic import ValidationError
 
 from loraforge.capability.resolver import resolve
 from loraforge.datasets.library import DatasetSummary, IngestResult
+from loraforge.jobs.runner import SubmitRefused
 from loraforge.recipes.schema import Recipe, validation_messages
 from loraforge.server.schemas import (
     CaptionPayload,
@@ -38,6 +39,7 @@ from loraforge.server.schemas import (
     DatasetCreated,
     DiagnoseResponse,
     DownloadStatus,
+    EngineStatus,
     IngestRequest,
     ModelStatus,
     TriggerRequest,
@@ -104,7 +106,12 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
     @app.get("/diagnose", response_model=DiagnoseResponse)
     def diagnose() -> DiagnoseResponse:
         report = deps.probe()
-        return DiagnoseResponse(hardware=report, capabilities=resolve(report, deps.matrix))
+        problems = deps.runner.adapter.check_environment(None)
+        return DiagnoseResponse(
+            hardware=report,
+            capabilities=resolve(report, deps.matrix),
+            engine=EngineStatus(ready=not problems, problems=problems),
+        )
 
     # ── Models ───────────────────────────────────────────────────────────────
 
@@ -284,7 +291,10 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
 
     @app.post("/jobs", status_code=201)
     async def submit_job(recipe: Recipe) -> dict[str, Any]:
-        job = await deps.runner.submit(recipe)
+        try:
+            job = await deps.runner.submit(recipe)
+        except SubmitRefused as exc:  # engine/model not ready — message names the fix
+            raise HTTPException(409, str(exc)) from exc
         return job_record(job.id)
 
     @app.get("/jobs")

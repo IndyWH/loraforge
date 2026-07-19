@@ -30,6 +30,7 @@ export interface DiagnoseResponse {
     notes: string[];
   };
   capabilities: { models: ModelCapability[]; warnings: string[] };
+  engine: { ready: boolean; problems: string[] };
 }
 
 export interface ModelCapability {

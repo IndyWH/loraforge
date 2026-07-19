@@ -28,6 +28,7 @@ export function ConfigureSection(props: {
   }, [props.trigger, props.preset, nameTouched]);
 
   const gpu = props.diagnose?.hardware.gpus[0] ?? null;
+  const engineBlocked = props.diagnose !== null && !props.diagnose.engine.ready;
   const preset = props.preset;
   const vramNeeded = preset?.min_free_vram_mb ?? null;
   const presetResolution = (preset?.settings.resolution as number | undefined) ?? 1024;
@@ -189,11 +190,18 @@ export function ConfigureSection(props: {
       <button
         className="primary"
         style={{ fontSize: 16, padding: "13px 30px" }}
-        disabled={submitting || props.activeJob || !preset || !props.summary}
+        disabled={submitting || props.activeJob || !preset || !props.summary || engineBlocked}
         onClick={() => void submit()}
       >
         {props.activeJob ? "Training runs below" : submitting ? "Checking everything…" : "▶ Start training"}
       </button>
+      {engineBlocked && (
+        // Rule 3: disabled, never hidden — and the reason names the fix.
+        <p className="hint" style={{ marginTop: 8 }}>
+          The training engine isn't set up on this machine yet — run{" "}
+          <code>loraforge setup</code> in a terminal, then this button unlocks.
+        </p>
+      )}
     </Step>
   );
 }

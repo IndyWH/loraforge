@@ -30,6 +30,7 @@ import asyncio
 import contextlib
 import json
 import os
+import traceback
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -169,6 +170,13 @@ _OOM_ADVICE = (
 )
 
 
+class SubmitRefused(ValueError):
+    """The recipe cannot run on this machine right now.
+
+    Raised before any job is created; the message is human-actionable and
+    safe to show verbatim in the UI (rule 5)."""
+
+
 class JobRunner:
     """FIFO queue + single worker over an EngineAdapter. See module docstring."""
 
@@ -198,6 +206,23 @@ class JobRunner:
             raise KeyError(f"no job with id '{job_id}'") from None
 
     async def submit(self, recipe: Recipe) -> Job:
+        """Queue a run — after refusing anything that cannot succeed here.
+
+        Rule 5: the engine must never discover a machine problem at step 40
+        (or step 0). Environment and model-file problems are caught before a
+        job record even exists, with messages that name the fix."""
+        problems = self.adapter.check_environment(None)
+        if problems:
+            raise SubmitRefused(
+                "The training engine isn't set up on this machine yet — run "
+                "`loraforge setup`, then start the job again. "
+                f"(Details: {'; '.join(problems)})"
+            )
+        try:  # dry compile: surfaces missing model/component files with human messages
+            self.adapter.compile(recipe, self.jobs_root / "_preflight")
+        except (ValueError, FileNotFoundError) as exc:
+            raise SubmitRefused(str(exc)) from exc
+
         job_id = uuid.uuid4().hex[:12]
         job = Job(id=job_id, recipe=recipe, workdir=self.jobs_root / job_id)
         job.workdir.mkdir(parents=True, exist_ok=True)
@@ -293,7 +318,18 @@ class JobRunner:
                     self._transition(job, JobState.CANCELLED, "Runner shut down.")
                 raise
             except Exception as exc:  # the worker must survive any single job
-                self._transition(job, JobState.FAILED, f"Unexpected error: {exc}")
+                # Rule 5: no raw errno/traceback ever reaches the UI. The
+                # message says what was happening and what to do; the raw
+                # detail goes to job.log for the bug report.
+                self._log_exception(job, exc)
+                self._transition(
+                    job,
+                    JobState.FAILED,
+                    "Training stopped because of an unexpected problem on this "
+                    "machine — not your settings. Technical detail is saved to "
+                    f"{job.log_path}. If it happens again, run `loraforge diagnose` "
+                    "and include both files in a bug report.",
+                )
 
     async def _execute(self, job: Job) -> None:
         retries = 0
@@ -313,9 +349,21 @@ class JobRunner:
                 path.write_text(content, encoding="utf-8")
 
             self._transition(job, JobState.RUNNING, f"Training started (attempt {retries + 1}).")
-            proc = await self._spawn(plan)
+            try:
+                proc = await self._spawn(plan)
+            except OSError as exc:  # engine env broke after submit-time preflight
+                self._log_exception(job, exc)
+                self._transition(
+                    job,
+                    JobState.FAILED,
+                    "Could not launch the training engine — its environment looks "
+                    "broken or incomplete. Run `loraforge setup` to repair it, then "
+                    f"start the job again. (Technical detail saved to {job.log_path}.)",
+                )
+                return
             job.proc = proc
             oom: ProgressEvent | None = None
+            fatal_hint: str | None = None  # adapter's diagnosis of a doomed run
             with job.log_path.open("a", encoding="utf-8") as log:
                 while not job.cancel_requested:
                     line = await proc.next_line()
@@ -326,6 +374,8 @@ class JobRunner:
                     if event is None:
                         continue
                     self._emit(job, "progress", progress=event, message=event.message)
+                    if event.fatal_hint:
+                        fatal_hint = event.fatal_hint
                     if event.is_oom:
                         oom = event
                         break
@@ -398,7 +448,11 @@ class JobRunner:
                 self._transition(
                     job,
                     JobState.FAILED,
-                    f"Training exited with code {returncode} — full log: {job.log_path}",
+                    # Prefer the adapter's diagnosis of what went wrong over a
+                    # bare exit code (rule 5); the raw lines are in job.log.
+                    f"{fatal_hint} (Full log: {job.log_path}.)"
+                    if fatal_hint
+                    else f"Training exited with code {returncode} — full log: {job.log_path}",
                 )
                 return
             try:
@@ -443,6 +497,11 @@ class JobRunner:
         job.history.append(event)
         for queue in job.subscribers:
             queue.put_nowait(event)
+
+    def _log_exception(self, job: Job, exc: BaseException) -> None:
+        """Raw traceback into job.log — the bug report gets it, the UI doesn't."""
+        with contextlib.suppress(OSError), job.log_path.open("a", encoding="utf-8") as log:
+            log.write("".join(traceback.format_exception(exc)))
 
     def _transition(self, job: Job, state: JobState, message: str | None = None) -> None:
         job.state = state

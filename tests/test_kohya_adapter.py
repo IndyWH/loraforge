@@ -103,6 +103,21 @@ def test_parse_line_detects_oom(adapter: KohyaAdapter) -> None:
     assert event is not None and event.is_oom
 
 
+def test_parse_line_diagnoses_numpy_mismatch(adapter: KohyaAdapter) -> None:
+    # Real lines from a run that died at import time (QA, engine env with
+    # NumPy 2): the diagnosis must name the problem and the fix, so the
+    # runner can show it instead of a bare exit code 1.
+    for line in (
+        "ImportError: numpy.core.multiarray failed to import",
+        "AttributeError: _ARRAY_API not found",
+    ):
+        event = adapter.parse_line(line)
+        assert event is not None and not event.is_oom
+        assert event.fatal_hint is not None
+        assert "NumPy" in event.fatal_hint
+        assert "loraforge setup" in event.fatal_hint
+
+
 def test_collect_finds_newest_artifact(adapter: KohyaAdapter, tmp_path: Path) -> None:
     out = tmp_path / "outputs"
     out.mkdir()

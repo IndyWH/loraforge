@@ -46,6 +46,10 @@ class ProgressEvent:
     message: str | None = None
     sample_image: Path | None = None  # engine wrote a preview image
     is_oom: bool = False  # triggers the auto-step-down retry path
+    # Human-worded diagnosis of a line that predicts a fatal exit. The runner
+    # uses the last hint as the failure message instead of a bare exit code
+    # (rule 5); the raw line stays in job.log.
+    fatal_hint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,8 +64,10 @@ class EngineAdapter(Protocol):
 
     name: str
 
-    def check_environment(self, env_dir: Path) -> list[str]:
-        """Return problems (empty list = ready). Used by the diagnostics page."""
+    def check_environment(self, env_dir: Path | None = None) -> list[str]:
+        """Return problems (empty list = ready); None → the adapter's own env.
+
+        Used by the diagnostics page and the runner's submit preflight."""
         ...
 
     def compile(self, recipe: Recipe, workdir: Path) -> LaunchPlan:

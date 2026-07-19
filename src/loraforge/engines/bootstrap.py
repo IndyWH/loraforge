@@ -49,6 +49,10 @@ class EngineSpec:
     repo_url: str
     pinned_ref: str  # a release tag; bump deliberately, we test against this tag only
     python_version: str  # uv downloads this as a standalone build
+    # Installed AFTER the engine's requirements.txt to correct pins the
+    # upstream file leaves loose. Recorded in the state file, so adding one
+    # here makes existing installs re-plan the fix on the next `setup`.
+    extra_pins: tuple[str, ...] = ()
 
 
 KOHYA = EngineSpec(
@@ -57,6 +61,10 @@ KOHYA = EngineSpec(
     repo_url="https://github.com/kohya-ss/sd-scripts",
     pinned_ref="v0.9.1",
     python_version="3.10",
+    # v0.9.1's requirements let NumPy resolve to 2.x, but its opencv-python
+    # wheel is built against NumPy 1.x — cv2 then fails at import and every
+    # training run dies at startup with exit code 1.
+    extra_pins=("numpy<2",),
 )
 
 ENGINE_SPECS: dict[str, EngineSpec] = {KOHYA.key: KOHYA}
@@ -258,6 +266,24 @@ class EngineBootstrapper:
                     cwd=paths.checkout,
                 )
             )
+
+        # Last, so requirements.txt can't re-loosen them. The state check makes
+        # a newly added pin repair existing installs on the next `setup` run.
+        if spec.extra_pins and (
+            fresh_env
+            or state.get("ref") != spec.pinned_ref
+            or tuple(state.get("pins", ())) != spec.extra_pins
+        ):
+            steps.append(
+                Step(
+                    f"Pin compatible package versions ({', '.join(spec.extra_pins)})",
+                    (
+                        self.uv, "pip", "install",
+                        "--python", str(env_python),
+                        *spec.extra_pins,
+                    ),
+                )
+            )
         return steps
 
     def problems(self) -> list[str]:
@@ -307,5 +333,6 @@ class EngineBootstrapper:
             "ref": self.spec.pinned_ref,
             "python": self.spec.python_version,
             "torch_cuda": self.torch.cuda,
+            "pins": list(self.spec.extra_pins),
         }
         self.paths.state_file.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")

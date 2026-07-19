@@ -60,6 +60,24 @@ _STEP_RE = re.compile(r"(\d+)/(\d+)\s*\[")
 _LOSS_RE = re.compile(r"avr_loss=([0-9.eE+-]+)")
 _OOM_MARKERS = ("CUDA out of memory", "torch.OutOfMemoryError", "CUBLAS_STATUS_ALLOC_FAILED")
 
+# Log lines that predict a fatal exit, mapped to human-worded diagnoses the
+# runner shows instead of a bare exit code (rule 5). Markers are data: new
+# failure modes get a row + test, not new code paths.
+_FATAL_MARKERS: tuple[tuple[str, str], ...] = (
+    (
+        "numpy.core.multiarray failed to import",
+        "The training engine's Python packages are mismatched (NumPy 2 is "
+        "installed where NumPy 1 is required). Run `loraforge setup` to repair "
+        "the engine environment, then start the job again.",
+    ),
+    (
+        "_ARRAY_API not found",
+        "The training engine's Python packages are mismatched (NumPy 2 is "
+        "installed where NumPy 1 is required). Run `loraforge setup` to repair "
+        "the engine environment, then start the job again.",
+    ),
+)
+
 
 class KohyaAdapter:
     """EngineAdapter implementation for kohya-ss/sd-scripts."""
@@ -176,6 +194,9 @@ class KohyaAdapter:
     def parse_line(self, line: str) -> ProgressEvent | None:
         if any(marker in line for marker in _OOM_MARKERS):
             return ProgressEvent(is_oom=True, message=line.strip())
+        for marker, diagnosis in _FATAL_MARKERS:
+            if marker in line:
+                return ProgressEvent(message=line.strip(), fatal_hint=diagnosis)
         if (m := _STEP_RE.search(line)) is None:
             return None
         loss = _LOSS_RE.search(line)

@@ -18,11 +18,22 @@ from loraforge.probe import HardwareReport
 DownloadStateName = Literal["not_downloaded", "downloading", "downloaded", "failed"]
 
 
+class EngineStatus(BaseModel):
+    """Is the training engine installed and runnable on this machine?
+
+    ``problems`` are human sentences; the UI disables Start with the first
+    one as the reason (rule 3: never hide, disable with a reason)."""
+
+    ready: bool
+    problems: list[str]
+
+
 class DiagnoseResponse(BaseModel):
     """What the UI's diagnostics page renders."""
 
     hardware: HardwareReport
     capabilities: CapabilityReport
+    engine: EngineStatus
 
 
 class ModelStatus(BaseModel):

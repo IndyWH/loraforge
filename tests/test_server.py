@@ -487,6 +487,32 @@ def test_control_shutdown_cancels_the_running_job_then_flips_the_hook(tmp_path) 
     assert calls == [True]  # exit flag flipped only after the jobs were stopped
 
 
+def test_submit_refused_maps_to_409_with_the_fix(tmp_path) -> None:
+    from test_job_runner import BrokenEnvAdapter
+
+    client, deps = make_client(tmp_path)
+    deps.runner.adapter = BrokenEnvAdapter()
+    with client:
+        response = client.post("/jobs", json=recipe_json(tmp_path))
+        assert response.status_code == 409
+        assert "loraforge setup" in response.json()["detail"]  # verbatim, actionable
+        assert client.get("/jobs").json() == []  # nothing was created
+
+
+def test_diagnose_reports_engine_status(tmp_path) -> None:
+    from test_job_runner import BrokenEnvAdapter
+
+    client, deps = make_client(tmp_path)
+    with client:
+        engine = client.get("/diagnose").json()["engine"]
+        assert engine == {"ready": True, "problems": []}
+
+        deps.runner.adapter = BrokenEnvAdapter()
+        engine = client.get("/diagnose").json()["engine"]
+        assert engine["ready"] is False
+        assert "accelerate" in engine["problems"][0]  # the reason the UI shows
+
+
 def test_control_shutdown_without_hook_says_how_to_stop(tmp_path) -> None:
     client, _ = make_client(tmp_path)  # no request_shutdown wired
     with client:
