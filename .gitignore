@@ -37,4 +37,4 @@ ui/dist/
 
 # Desktop shell (Rust/Tauri)
 desktop/target/
-desktop/gen/
+desktop/src-tauri/gen/
