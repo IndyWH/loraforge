@@ -12,12 +12,12 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
-from loraforge.downloader import DownloadError, DownloadState
+from loraforge.downloader import DownloadError, DownloadEvent, DownloadState
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
 
-    from loraforge.downloader import DownloadedModel, DownloadEvent, ModelDownloader
+    from loraforge.downloader import DownloadedModel, ModelDownloader
     from loraforge.server.schemas import DownloadStateName
 
 
@@ -46,12 +46,14 @@ class DownloadManager:
     def status(self, model_key: str) -> DownloadStateName:
         if model_key in self._results:
             return "downloaded"
-        task = self._tasks.get(model_key)
-        if task is not None and not task.done():
-            return "downloading"
+        # A terminal failed event outranks the task: stop_all() pushes one
+        # before the cancelled task has had a chance to finish.
         history = self._history.get(model_key)
         if history and history[-1].state is DownloadState.FAILED:
             return "failed"
+        task = self._tasks.get(model_key)
+        if task is not None and not task.done():
+            return "downloading"
         if self._downloader.peek(model_key) is not None:
             return "downloaded"  # cached before this session (or by another tool)
         return "not_downloaded"
@@ -80,6 +82,28 @@ class DownloadManager:
 
         self._tasks[model_key] = asyncio.create_task(run())
         return True
+
+    def stop_all(self) -> None:
+        """Abandon in-flight downloads (the shutdown path).
+
+        The hub call runs in a thread that can't be interrupted mid-file, so
+        this cancels the wrapping task (no completion wiring will fire) and
+        pushes a terminal event so subscribed streams end instead of holding
+        shutdown open. Partial files resume from the HF cache next launch.
+        """
+        for model_key, task in self._tasks.items():
+            if task.done():
+                continue
+            task.cancel()
+            self._push(
+                model_key,
+                DownloadEvent(
+                    model_key=model_key,
+                    state=DownloadState.FAILED,
+                    message="Download stopped — LoRAForge is shutting down. "
+                    "It will pick up where it left off next time.",
+                ),
+            )
 
     async def events(self, model_key: str) -> AsyncIterator[DownloadEvent]:
         """Replay this session's events for a download, then follow live ones."""

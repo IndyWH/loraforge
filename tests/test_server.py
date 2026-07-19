@@ -6,6 +6,11 @@ the downloader gets the fake hub from the downloader tests.
 """
 
 import asyncio
+import contextlib
+import json
+import os
+import socket
+import threading
 
 import pytest
 from fastapi.testclient import TestClient
@@ -19,7 +24,7 @@ from loraforge.datasets.library import DatasetLibrary
 from loraforge.jobs.runner import JobRunner
 from loraforge.server.app import ServerDeps, create_app
 from loraforge.server.downloads import DownloadManager
-from loraforge.server.run import ensure_local_bind
+from loraforge.server.run import READY_PREFIX, ensure_local_bind, pick_port, ready_line
 
 RTX_3060 = fake_report("NVIDIA GeForce RTX 3060", 12288, 11400, (8, 6))
 
@@ -410,3 +415,106 @@ def test_refuses_non_loopback_bind_without_override() -> None:
     with pytest.raises(SystemExit, match="no authentication"):
         ensure_local_bind("192.168.1.20")
     ensure_local_bind("0.0.0.0", allow_remote=True)  # explicit override is honored
+
+
+# ── Desktop-shell contract: pick_port, ready announce, shutdown ──────────────
+
+
+def test_pick_port_uses_preferred_when_free() -> None:
+    with contextlib.closing(pick_port(preferred=0)) as probe_sock:
+        free_port = probe_sock.getsockname()[1]
+    sock = pick_port(preferred=free_port)
+    try:
+        assert sock.getsockname()[1] == free_port
+    finally:
+        sock.close()
+
+
+def test_pick_port_falls_back_when_preferred_is_taken() -> None:
+    with contextlib.closing(pick_port(preferred=0)) as taken:
+        taken_port = taken.getsockname()[1]
+        sock = pick_port(preferred=taken_port)
+        try:
+            fallback_port = sock.getsockname()[1]
+            assert fallback_port != taken_port
+            assert fallback_port > 0  # a real OS-assigned port, not another collision
+        finally:
+            sock.close()
+
+
+def test_pick_port_socket_accepts_connections_before_uvicorn() -> None:
+    # The ready line is printed before uvicorn runs; the shell may connect
+    # immediately, so the socket pick_port returns must already be listening.
+    with contextlib.closing(pick_port(preferred=0)) as sock:
+        port = sock.getsockname()[1]
+        with contextlib.closing(socket.create_connection(("127.0.0.1", port), timeout=2)):
+            pass
+
+
+def test_ready_line_is_prefix_plus_json_the_shell_can_parse() -> None:
+    line = ready_line("127.0.0.1", 8471)
+    assert line.startswith(READY_PREFIX)  # the shell keys on a cheap starts-with
+    assert "\n" not in line  # the shell matches a single stdout line
+    payload = json.loads(line.removeprefix(READY_PREFIX))
+    assert payload["url"] == "http://127.0.0.1:8471"
+    assert payload["port"] == 8471
+    assert payload["pid"] == os.getpid()
+    # IPv6 hosts need brackets or the URL is unusable
+    v6 = json.loads(ready_line("::1", 9000).removeprefix(READY_PREFIX))
+    assert v6["url"] == "http://[::1]:9000"
+
+
+def test_control_shutdown_cancels_the_running_job_then_flips_the_hook(tmp_path) -> None:
+    client, deps = make_client(tmp_path, procs=[HangingProcess()])
+    calls: list[bool] = []
+    deps.request_shutdown = lambda: calls.append(True)
+    with client:
+        job = client.post("/jobs", json=recipe_json(tmp_path)).json()
+        queued = client.post("/jobs", json=recipe_json(tmp_path)).json()
+        with ws_connect(client, f"/jobs/{job['id']}/events") as ws:
+            while ws.receive_json().get("state") != "running":
+                pass
+            response = client.post("/control/shutdown")
+            assert response.status_code == 202
+            assert response.json() == {"stopping": True}
+            final = drain_ws(ws)[-1]  # cancellation lets the stream end — no WS deadlock
+        # keep=True: shutdown keeps the last checkpoint, as the close dialog promises
+        assert final["state"] == "completed_early"
+        assert client.get(f"/jobs/{job['id']}").json()["state"] == "completed_early"
+        # the queued job never ran, so there is nothing to keep — plain cancelled
+        with ws_connect(client, f"/jobs/{queued['id']}/events") as ws:
+            assert drain_ws(ws)[-1]["state"] == "cancelled"
+    assert calls == [True]  # exit flag flipped only after the jobs were stopped
+
+
+def test_control_shutdown_without_hook_says_how_to_stop(tmp_path) -> None:
+    client, _ = make_client(tmp_path)  # no request_shutdown wired
+    with client:
+        response = client.post("/control/shutdown")
+    assert response.status_code == 503
+    assert "Ctrl+C" in response.json()["detail"]
+
+
+def test_stop_all_ends_an_inflight_download_stream(tmp_path) -> None:
+    downloader, _hub = make_downloader(tmp_path)
+    release = threading.Event()
+    real_download = downloader.download
+
+    def slow_download(model_key, on_event=None):
+        release.wait(timeout=10)  # a big file mid-transfer
+        return real_download(model_key, on_event)
+
+    downloader.download = slow_download
+
+    async def scenario() -> None:
+        manager = DownloadManager(downloader)
+        assert manager.start("sdxl")
+        manager.stop_all()
+        # the stream still ends with a terminal event — nothing holds shutdown open
+        events = [event async for event in manager.events("sdxl")]
+        assert events[-1].is_terminal
+        assert "shutting down" in events[-1].message
+        assert manager.status("sdxl") != "downloading"
+        release.set()  # let the worker thread finish so the loop can close
+
+    asyncio.run(scenario())

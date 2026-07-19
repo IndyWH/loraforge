@@ -1,8 +1,19 @@
-"""Server entrypoint: loopback-only binding policy and real dependency wiring."""
+"""Server entrypoint: loopback-only binding policy and real dependency wiring.
+
+Also the desktop-shell contract (docs/design/tauri-shell.md): the Tauri shell
+spawns ``loraforge serve``, reads stdout line-by-line until it sees the
+``LORAFORGE_READY`` prefix (a cheap starts-with — no JSON parsing of every
+line), then parses the JSON payload after it and points its webview at the
+announced URL. The socket is bound and listening *before* the line is
+printed, so the shell can connect the moment it sees it.
+"""
 
 from __future__ import annotations
 
 import ipaddress
+import json
+import os
+import socket
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -39,6 +50,46 @@ def ensure_local_bind(host: str, allow_remote: bool = False) -> None:
             "and is meant for this machine only. Use 127.0.0.1 (the default), or pass "
             "--allow-remote if you really intend to expose it."
         )
+
+
+READY_PREFIX = "LORAFORGE_READY "
+
+
+def pick_port(host: str = "127.0.0.1", preferred: int = 8471) -> socket.socket:
+    """Bind and listen on the preferred port, or an OS-assigned free one.
+
+    Returns the listening socket (hand it to uvicorn via ``sockets=[...]``).
+    Binding up front — instead of probing and binding later — means there is
+    no window where the announced port can be stolen, and the shell's first
+    connection simply queues in the backlog until uvicorn starts accepting.
+    """
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    sock = socket.socket(family, socket.SOCK_STREAM)
+    if os.name != "nt":  # on Windows SO_REUSEADDR lets another bind steal a live port
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((host, preferred))
+    except OSError:  # in use (or a port Windows reserves) — fall back to any free port
+        sock.close()
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        if os.name != "nt":
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, 0))
+    sock.listen(128)
+    return sock
+
+
+def ready_line(host: str, port: int) -> str:
+    """The single stdout line the desktop shell waits for.
+
+    ``LORAFORGE_READY`` prefix as the ready marker (the shell keys on a
+    starts-with, never uvicorn's log banner), JSON payload for structure.
+    The pid lets it watch for a server that dies after announcing; the url
+    always carries the real (possibly fallback) port.
+    """
+    display_host = f"[{host}]" if ":" in host else host
+    payload = {"url": f"http://{display_host}:{port}", "port": port, "pid": os.getpid()}
+    return READY_PREFIX + json.dumps(payload)
 
 
 def build_default_deps() -> ServerDeps:
@@ -83,7 +134,22 @@ def serve(
     ensure_local_bind(host, allow_remote)
     import uvicorn
 
+    sock = pick_port(host, port)
+    actual_port = sock.getsockname()[1]
+    if actual_port != port:
+        print(f"port {port} is in use — using {actual_port} instead", flush=True)
+
     # Under --allow-remote the Host/Origin checks come off too: the operator
     # fronts their own auth/proxy, and remote Hosts are then legitimate.
-    app = create_app(deps or build_default_deps(), local_only=not allow_remote)
-    uvicorn.run(app, host=host, port=port)
+    deps = deps or build_default_deps()
+    app = create_app(deps, local_only=not allow_remote)
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=actual_port))
+
+    def request_shutdown() -> None:  # POST /control/shutdown → graceful uvicorn exit
+        server.should_exit = True
+
+    deps.request_shutdown = request_shutdown
+    # Unconditional: one extra line in a terminal, and the desktop shell
+    # depends on it. The socket already accepts, so announcing here is safe.
+    print(ready_line(host, actual_port), flush=True)
+    server.run(sockets=[sock])

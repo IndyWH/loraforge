@@ -231,6 +231,20 @@ class JobRunner:
         if job.proc is not None:  # unblock the worker's read loop
             await self._stop(job.proc)
 
+    async def cancel_all(self, keep: bool = False) -> list[str]:
+        """Cancel every queued/running job (the shutdown path); returns their ids.
+
+        Each cancellation goes through :meth:`cancel`, so a mid-run job still
+        gets the checkpointed stop and its terminal event — which also lets
+        any attached event stream end instead of holding shutdown open.
+        """
+        cancelled = []
+        for job_id, job in list(self._jobs.items()):
+            if job.state not in TERMINAL_STATES:
+                await self.cancel(job_id, keep=keep)
+                cancelled.append(job_id)
+        return cancelled
+
     async def events(self, job_id: str) -> AsyncIterator[JobEvent]:
         """Replay a job's full event history, then follow live events.
 

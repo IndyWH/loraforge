@@ -11,6 +11,7 @@ thing. Binding policy (loopback only by default) lives in ``run.py``.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import re
@@ -69,6 +70,7 @@ class ServerDeps:
     probe: Callable[[], HardwareReport]
     matrix: dict[str, Any] | None = None  # None → the bundled capability matrix
     ui_dist: Path | None = None  # built web UI to serve at / (ui/dist), if present
+    request_shutdown: Callable[[], None] | None = None  # set by run.serve(); None → no control
 
 
 def _payload(event: Any) -> dict[str, Any]:
@@ -329,6 +331,33 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
         except WebSocketDisconnect:
             return
         await websocket.close()
+
+    # ── Control (desktop shell) ──────────────────────────────────────────────
+
+    @app.post("/control/shutdown", status_code=202)
+    async def control_shutdown() -> dict[str, bool]:
+        """Graceful exit for the desktop shell when its window closes.
+
+        Order matters: jobs and downloads are stopped *before* the exit flag
+        flips, so their event streams reach a terminal event and close —
+        uvicorn's graceful shutdown waits for open connections, and a job WS
+        stays open until its job ends. Runs in the background so the 202
+        returns immediately; the shell force-kills only if exit stalls.
+        """
+        if deps.request_shutdown is None:
+            raise HTTPException(
+                503,
+                "this server has no shutdown control — stop it from the "
+                "terminal it was started in (Ctrl+C)",
+            )
+
+        async def sequence() -> None:
+            await deps.runner.cancel_all(keep=True)  # checkpointed stop, the tested path
+            deps.downloads.stop_all()
+            deps.request_shutdown()
+
+        app.state.shutdown_task = asyncio.create_task(sequence())
+        return {"stopping": True}
 
     # ── Web UI (built bundle) ────────────────────────────────────────────────
     # Mounted last: API routes above always win; everything else is the app.

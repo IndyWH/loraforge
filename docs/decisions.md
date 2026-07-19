@@ -156,3 +156,28 @@ message a non-expert can act on ("resolution must be a multiple of 64",
 download step first"). The engine must never discover a config problem at
 step 40. Tests pin the actionable words in error messages, not just the
 error types.
+
+## 16. Desktop shell is a dumb orchestrator; the webview points at the local server
+
+The Tauri app bundles no UI and holds no logic beyond process/window
+lifecycle; it navigates to the same localhost origin the browser uses. One
+origin, one code path, testable in Python. Rejected: bundling the React app
+into Tauri and calling the API cross-origin — two serving paths to keep
+honest for zero user benefit.
+
+## 17. Closing the window stops training, with confirmation
+
+Close during a run asks first, then cancels through the runner's
+checkpointed-stop path and shuts the server down. Rejected for now:
+tray/background mode (adds Windows background-process expectations and
+reattach complexity before anyone has asked for it) and silent kill (losing
+a 3-hour run to a misclick contradicts the graceful-degradation brand).
+Revisit tray when real users ask for close-and-keep-training.
+
+## 18. Sidecar contract: stdout-announced readiness, endpoint-driven shutdown
+
+The server prints a single JSON ready line (port, url, pid); the shell never
+parses uvicorn logs and never assumes the port. Shutdown is
+`POST /control/shutdown` (cancel jobs → stop downloads → exit), with
+shell-side force-kill of the process group/Job Object only as a logged
+fallback. Preferred port 8471, ephemeral fallback.
