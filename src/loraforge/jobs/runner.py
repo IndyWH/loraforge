@@ -131,15 +131,40 @@ class _EngineProcess:
 
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
+        self._buffer = b""
 
     @property
     def returncode(self) -> int | None:
         return self._proc.returncode
 
     async def next_line(self) -> str | None:
-        assert self._proc.stdout is not None
-        raw = await self._proc.stdout.readline()
-        return raw.decode("utf-8", errors="replace") if raw else None
+        """Next output segment, split on \\n OR \\r.
+
+        tqdm redraws its bar with bare carriage returns on one endless line;
+        a plain readline() would sit on 20 minutes of progress until some
+        other output emits a newline — the UI then sees stale step bursts
+        with identical timestamps and can never compute an ETA. Blank
+        segments (\\r\\n pairs, redraw padding) are skipped.
+        """
+        stream = self._proc.stdout
+        assert stream is not None
+        while True:
+            cuts = [i for i in (self._buffer.find(b"\n"), self._buffer.find(b"\r")) if i != -1]
+            if cuts:
+                cut = min(cuts)
+                segment = self._buffer[:cut]
+                skip = 2 if self._buffer[cut : cut + 2] == b"\r\n" else 1
+                self._buffer = self._buffer[cut + skip :]
+                if not segment.strip():
+                    continue
+                return segment.decode("utf-8", errors="replace") + "\n"
+            chunk = await stream.read(4096)
+            if not chunk:
+                if self._buffer.strip():
+                    segment, self._buffer = self._buffer, b""
+                    return segment.decode("utf-8", errors="replace") + "\n"
+                return None
+            self._buffer += chunk
 
     async def wait(self) -> int:
         return await self._proc.wait()

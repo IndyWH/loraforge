@@ -551,3 +551,33 @@ def test_abandoned_job_swept_to_failed_on_boot(tmp_path: Path) -> None:
     assert swept["name"] == "test-run"
     assert [h["state"] for h in swept["state_history"]] == ["queued", "running", "failed"]
     assert swept["state_history"][-1]["message"] == swept["error"]
+
+
+def test_engine_process_splits_tqdm_carriage_returns(tmp_path: Path) -> None:
+    # tqdm redraws its bar with \r on one endless line; each redraw must
+    # surface as its own line or progress reaches the UI in stale bursts
+    # (and the ETA, fed identical timestamps, stays a dash forever).
+    import sys
+
+    from loraforge.engines.base import LaunchPlan
+    from loraforge.jobs.runner import _spawn_subprocess
+
+    script = (
+        "import sys; "
+        "sys.stdout.write('steps:  0%| | 0/8 [00:00<?, ?it/s]\\r"
+        "steps: 12%| | 1/8 [00:45<05:15, 45.0s/it, avr_loss=0.11]\\r"
+        "steps: 25%| | 2/8 [01:30<04:30, 45.0s/it, avr_loss=0.13]\\n')"
+    )
+
+    async def scenario() -> None:
+        plan = LaunchPlan(argv=[sys.executable, "-c", script], cwd=tmp_path)
+        proc = await _spawn_subprocess(plan)
+        lines = []
+        while (line := await proc.next_line()) is not None:
+            lines.append(line.rstrip("\n"))
+        await proc.wait()
+        assert len(lines) == 3  # one per redraw, not one giant burst
+        assert lines[1].endswith("avr_loss=0.11]")
+        assert lines[2].endswith("avr_loss=0.13]")
+
+    asyncio.run(scenario())
