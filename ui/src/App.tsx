@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
 import type { DatasetSummary, DiagnoseResponse, JobRecord, ModelStatus } from "./api";
-import { emptyJobView, foldEvents } from "./jobView";
+import { emptyJobView, foldEvents, reconnectDecision, viewFromRecord } from "./jobView";
 import type { JobView } from "./jobView";
 import { ConfigureSection } from "./sections/Configure";
 import { DatasetSection } from "./sections/Dataset";
@@ -45,6 +45,10 @@ export function App() {
       .job(stored)
       .then((record) => {
         setJob(record);
+        // A finished job's record is authoritative — don't wait for a WS
+        // replay that no longer exists after a server restart (that wait
+        // was the "training running forever" ghost).
+        setView(viewFromRecord(record));
         setModelKey(record.model);
         const word = record.recipe.dataset?.trigger_word;
         if (typeof word === "string") setTrigger(word);
@@ -66,9 +70,13 @@ export function App() {
     if (view.terminal) advance(5);
   }, [view.terminal, advance]);
 
-  // Job event stream: replay + live, reconnect with backoff until terminal.
+  // Job event stream: replay + live, reconnect with backoff until terminal
+  // (replay dedupes by seq). A terminal record needs no socket at all; on
+  // any close the record is re-fetched once and reconnectDecision picks
+  // adopt-and-stop vs retry — a socket the restarted server refuses (4004)
+  // must never leave the app waiting on a ghost "running" forever.
   useEffect(() => {
-    if (!job) return;
+    if (!job || view.terminal) return;
     let socket: WebSocket | null = null;
     let closed = false;
     let retry: ReturnType<typeof setTimeout>;
@@ -80,10 +88,17 @@ export function App() {
       };
       socket.onclose = () => {
         if (closed) return;
-        setView((current) => {
-          if (!current.terminal) retry = setTimeout(connect, 1500); // replay dedupes by seq
-          return current;
-        });
+        api
+          .job(job.id)
+          .catch(() => null)
+          .then((record) => {
+            if (closed) return;
+            setView((current) => {
+              const decision = reconnectDecision(current, record);
+              if (decision.retry) retry = setTimeout(connect, 1500);
+              return decision.view;
+            });
+          });
       };
     };
     connect();
@@ -92,7 +107,8 @@ export function App() {
       clearTimeout(retry);
       socket?.close();
     };
-  }, [job]);
+    // view.terminal (not view) so the effect re-runs only when it flips
+  }, [job, view.terminal]);
 
   const startJob = (record: JobRecord) => {
     localStorage.setItem(JOB_KEY, record.id);

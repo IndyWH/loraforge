@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import type { JobEventMsg } from "./api";
-import { emptyJobView, etaMinutes, foldEvents } from "./jobView";
+import {
+  emptyJobView,
+  etaMinutes,
+  foldEvents,
+  reconnectDecision,
+  viewFromRecord,
+} from "./jobView";
 
 let seq = 0;
 const state = (s: string, message: string | null = null): JobEventMsg => ({
@@ -82,5 +88,79 @@ describe("foldEvents", () => {
     ]);
     expect(view.terminal).toBe(true);
     expect(view.state).toBe("completed_early");
+  });
+});
+
+describe("viewFromRecord", () => {
+  const history = (states: [string, string | null][]) =>
+    states.map(([state, message]) => ({ state, message }));
+
+  it("resumes a swept/failed record as terminal — no ghost 'running forever'", () => {
+    const view = viewFromRecord({
+      state: "failed",
+      error:
+        "LoRAForge was closed while this job was running; it did not finish. " +
+        "Start the job again when you're ready.",
+      state_history: history([["queued", null], ["running", null], ["failed", "…"]]),
+    });
+    expect(view.terminal).toBe(true); // activeJob = job && !terminal → Start unlocks
+    expect(view.state).toBe("failed");
+    expect(view.finalMessage).toContain("did not finish");
+    expect(view.finalMessage).toContain("Start the job again");
+  });
+
+  it("resumes a completed record with the completion message from history", () => {
+    const view = viewFromRecord({
+      state: "completed",
+      error: null,
+      state_history: history([
+        ["running", null],
+        ["completed", "Training complete — LoRA saved to /out/lora.safetensors"],
+      ]),
+    });
+    expect(view.terminal).toBe(true);
+    expect(view.finalMessage).toContain("Training complete");
+  });
+
+  it("leaves a live job empty so the WS replay fills it in", () => {
+    const view = viewFromRecord({
+      state: "running",
+      error: null,
+      state_history: history([["queued", null], ["running", null]]),
+    });
+    expect(view).toEqual(emptyJobView);
+  });
+});
+
+describe("reconnectDecision", () => {
+  const failedRecord = {
+    state: "failed",
+    error: "LoRAForge was closed while this job was running; it did not finish.",
+    state_history: [{ state: "failed", message: null }],
+  };
+  const liveRecord = { state: "running", error: null, state_history: [] };
+
+  it("refused socket + terminal record → adopt terminal view, stop retrying", () => {
+    const decision = reconnectDecision(emptyJobView, failedRecord);
+    expect(decision.retry).toBe(false); // never retries forever on a dead stream
+    expect(decision.view.terminal).toBe(true); // Start unghosts
+    expect(decision.view.finalMessage).toContain("did not finish");
+  });
+
+  it("dropped socket + live record → keep the reconnect loop", () => {
+    const decision = reconnectDecision(emptyJobView, liveRecord);
+    expect(decision.retry).toBe(true);
+    expect(decision.view).toBe(emptyJobView); // untouched; WS replay will fill it
+  });
+
+  it("record fetch failed → retry (server may just be coming back)", () => {
+    expect(reconnectDecision(emptyJobView, null).retry).toBe(true);
+  });
+
+  it("already-terminal view → no socket business at all", () => {
+    const terminal = viewFromRecord(failedRecord);
+    const decision = reconnectDecision(terminal, liveRecord);
+    expect(decision.retry).toBe(false);
+    expect(decision.view).toBe(terminal);
   });
 });

@@ -56,6 +56,48 @@ export function etaMinutes(samples: RateSample[], totalSteps: number | null): nu
   return Math.ceil((totalSteps - last.step) / (steps / seconds) / 60);
 }
 
+// A REST-fetched record is the source of truth for a finished job: after a
+// server restart there is no event stream left to replay, so a resumed view
+// must not wait for one — that freeze is exactly the "training running
+// forever" ghost. Live (non-terminal) jobs still start empty and let the
+// WS replay fill in history.
+export function viewFromRecord(record: {
+  state: string;
+  error: string | null;
+  state_history: { state: string; message: string | null }[];
+}): JobView {
+  if (!TERMINAL_STATES.includes(record.state)) return emptyJobView;
+  const last = record.state_history[record.state_history.length - 1];
+  return {
+    ...emptyJobView,
+    state: record.state,
+    terminal: true,
+    // failures carry the message in `error`; completions in the last
+    // state_history entry ("Training complete — LoRA saved to …")
+    finalMessage: record.error ?? last?.message ?? null,
+  };
+}
+
+// One decision per socket close, from the freshly re-fetched record (null if
+// that fetch itself failed): adopt a terminal record's view and stop, or
+// keep the reconnect loop alive for a genuinely live job. Pure so the ghost
+// can be pinned by tests — a socket the server refuses (job gone from the
+// runner after a restart, close 4004) must never retry forever.
+export function reconnectDecision(
+  view: JobView,
+  record: {
+    state: string;
+    error: string | null;
+    state_history: { state: string; message: string | null }[];
+  } | null,
+): { view: JobView; retry: boolean } {
+  if (view.terminal) return { view, retry: false };
+  if (record && TERMINAL_STATES.includes(record.state)) {
+    return { view: viewFromRecord(record), retry: false };
+  }
+  return { view, retry: true };
+}
+
 export function foldEvents(view: JobView, events: JobEventMsg[]): JobView {
   let next = view;
   for (const event of events) {
