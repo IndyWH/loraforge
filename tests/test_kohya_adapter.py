@@ -1,5 +1,6 @@
 """kohya adapter tests: recipe → launch plan, progress parsing, artifact collection."""
 
+import os
 from pathlib import Path
 
 import pytest
@@ -101,6 +102,41 @@ def test_parse_line_detects_oom(adapter: KohyaAdapter) -> None:
         "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.50 GiB"
     )
     assert event is not None and event.is_oom
+
+
+def test_compile_resolves_model_symlinks(tmp_path: Path) -> None:
+    # The HF cache hands out snapshot *symlinks*; kohya readlink()s them to a
+    # relative blob path and dies ("neither a valid local path nor a valid
+    # repo id"). Rendered argv must always carry the real file.
+    if os.name == "nt":
+        pytest.skip("symlink creation needs privileges on Windows runners")
+    blob = tmp_path / "blobs" / "31e35c80fc4829"
+    blob.parent.mkdir()
+    blob.write_bytes(b"weights")
+    snapshot = tmp_path / "snapshots" / "462165"
+    snapshot.mkdir(parents=True)
+    link = snapshot / "sd_xl_base_1.0.safetensors"
+    link.symlink_to(Path("..") / ".." / "blobs" / "31e35c80fc4829")  # relative, like HF
+
+    adapter = KohyaAdapter(
+        sd_scripts_dir=tmp_path / "sd-scripts",
+        env_dir=tmp_path / "env",
+        model_paths={"sdxl": link},
+    )
+    plan = adapter.compile(Recipe.from_yaml(RECIPE_PATH), tmp_path / "job")
+    model_arg = next(a for a in plan.argv if a.startswith("--pretrained_model_name_or_path="))
+    assert model_arg.endswith(str(blob))  # the resolved target, not the symlink
+    assert "sd_xl_base_1.0.safetensors" not in model_arg
+
+
+def test_parse_line_diagnoses_broken_model_path(adapter: KohyaAdapter) -> None:
+    event = adapter.parse_line(
+        'ValueError: The provided pretrained_model_name_or_path "../../blobs/31e3" '
+        "is neither a valid local path nor a valid repo id. Please check the parameter."
+    )
+    assert event is not None and event.fatal_hint is not None
+    assert "base model" in event.fatal_hint
+    assert "Download the model again" in event.fatal_hint
 
 
 def test_parse_line_diagnoses_numpy_mismatch(adapter: KohyaAdapter) -> None:

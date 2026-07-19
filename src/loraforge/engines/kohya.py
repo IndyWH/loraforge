@@ -76,6 +76,12 @@ _FATAL_MARKERS: tuple[tuple[str, str], ...] = (
         "installed where NumPy 1 is required). Run `loraforge setup` to repair "
         "the engine environment, then start the job again.",
     ),
+    (
+        "is neither a valid local path nor a valid repo id",
+        "The training engine couldn't load the base model file — its download "
+        "looks broken or incomplete. Download the model again in the Models "
+        "step, then start the job again.",
+    ),
 )
 
 
@@ -124,6 +130,10 @@ class KohyaAdapter:
                 f"base model for '{recipe.model}' has not been downloaded yet — "
                 "run the model download step first"
             )
+        # The HF cache serves files as snapshot symlinks; kohya readlink()s
+        # those to a *relative* blob path and then can't find it. Engines get
+        # fully resolved paths, never symlinks.
+        base_model = base_model.resolve()
 
         config_files: dict[Path, str] = {
             workdir / "dataset.toml": self._render_dataset_toml(recipe)
@@ -187,7 +197,7 @@ class KohyaAdapter:
                     f"{', '.join(missing)} — run the model download step first"
                 )
             for asset_name, flag in spec.required_assets.items():
-                argv.append(f"{flag}={assets[asset_name]}")
+                argv.append(f"{flag}={assets[asset_name].resolve()}")  # same symlink rule
 
         return LaunchPlan(argv=argv, cwd=self.sd_scripts_dir, config_files=config_files)
 
