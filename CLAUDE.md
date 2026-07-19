@@ -16,6 +16,18 @@ to train a LoRA without reading a 40-step tutorial. The three problems we
 exist to solve: brutal installation, unexplained parameter walls, and configs
 that OOM because they were written for someone else's GPU.
 
+## How this project is developed
+
+LoRAForge is built by a three-way team — Wajira (product owner / QA Oracle:
+decides what to build, judges results on real hardware, relays messages
+between the AIs), Claude Cowork (design and review: writes design briefs
+into docs/design/, reviews diffs, maintains docs/decisions.md wording), and
+Claude Code (implementation: writes the code and tests, commits, flags
+deviations from the brief for review). Design briefs in docs/design/ are
+the contract; code follows the brief, and approved as-built deviations get
+folded back into the brief. Wajira prefers minimal reading — reports to him
+should be short verdicts, not essays.
+
 ## Architecture
 
 ```
