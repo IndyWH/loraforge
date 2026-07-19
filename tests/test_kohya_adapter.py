@@ -13,10 +13,13 @@ RECIPE_PATH = Path("examples/recipes/sdxl-character-12gb.yaml")
 
 @pytest.fixture()
 def adapter(tmp_path: Path) -> KohyaAdapter:
+    model = tmp_path / "models" / "sdxl.safetensors"
+    model.parent.mkdir()
+    model.write_bytes(b"")  # compile requires model files to exist on disk
     return KohyaAdapter(
         sd_scripts_dir=tmp_path / "sd-scripts",
         env_dir=tmp_path / "env",
-        model_paths={"sdxl": tmp_path / "models" / "sdxl.safetensors"},
+        model_paths={"sdxl": model},
     )
 
 
@@ -57,6 +60,9 @@ def test_compile_flux_low_vram_flags(adapter: KohyaAdapter, tmp_path: Path) -> N
         "t5xxl": tmp_path / "t5xxl.safetensors",
         "ae": tmp_path / "ae.safetensors",
     }
+    (tmp_path / "flux").write_bytes(b"")
+    for asset in adapter.asset_paths["flux_dev"].values():
+        asset.write_bytes(b"")
     recipe = Recipe.from_yaml(RECIPE_PATH).with_overrides(
         {
             "model": "flux_dev",
@@ -83,6 +89,10 @@ def test_compile_errors_speak_human(adapter: KohyaAdapter, tmp_path: Path) -> No
         adapter.compile(recipe.model_copy(update={"model": "sd15"}), tmp_path)
 
     adapter.model_paths["flux_dev"] = tmp_path / "flux"
+    with pytest.raises(ValueError, match="missing"):  # in the dict but not on disk
+        adapter.compile(recipe.model_copy(update={"model": "flux_dev"}), tmp_path)
+
+    (tmp_path / "flux").write_bytes(b"")
     with pytest.raises(ValueError, match="clip_l"):
         adapter.compile(recipe.model_copy(update={"model": "flux_dev"}), tmp_path)
 
@@ -104,10 +114,12 @@ def test_parse_line_detects_oom(adapter: KohyaAdapter) -> None:
     assert event is not None and event.is_oom
 
 
-def test_compile_resolves_model_symlinks(tmp_path: Path) -> None:
-    # The HF cache hands out snapshot *symlinks*; kohya readlink()s them to a
-    # relative blob path and dies ("neither a valid local path nor a valid
-    # repo id"). Rendered argv must always carry the real file.
+def test_compile_materializes_engine_loadable_model_path(tmp_path: Path) -> None:
+    # The HF cache hands out snapshot *symlinks* to extensionless blobs.
+    # kohya readlink()s symlinks (raw relative target → "neither a valid
+    # local path nor a valid repo id") and switches loaders on the file
+    # extension (blob path → torch.load → "Weights only load failed"), so
+    # the rendered argv must carry a REAL file ending in .safetensors.
     if os.name == "nt":
         pytest.skip("symlink creation needs privileges on Windows runners")
     blob = tmp_path / "blobs" / "31e35c80fc4829"
@@ -123,10 +135,33 @@ def test_compile_resolves_model_symlinks(tmp_path: Path) -> None:
         env_dir=tmp_path / "env",
         model_paths={"sdxl": link},
     )
-    plan = adapter.compile(Recipe.from_yaml(RECIPE_PATH), tmp_path / "job")
+    workdir = tmp_path / "jobs" / "job1"
+    plan = adapter.compile(Recipe.from_yaml(RECIPE_PATH), workdir)
     model_arg = next(a for a in plan.argv if a.startswith("--pretrained_model_name_or_path="))
-    assert model_arg.endswith(str(blob))  # the resolved target, not the symlink
-    assert "sd_xl_base_1.0.safetensors" not in model_arg
+    handed = Path(model_arg.split("=", 1)[1])
+    assert handed.suffix == ".safetensors"  # extension drives kohya's loader
+    assert not handed.is_symlink()  # kohya readlink()s symlinks to raw targets
+    assert handed.samefile(blob)  # hardlink to the real weights, no copy
+    # shared across jobs: a second compile reuses the same materialized file
+    plan2 = adapter.compile(Recipe.from_yaml(RECIPE_PATH), tmp_path / "jobs" / "job2")
+    assert f"--pretrained_model_name_or_path={handed}" in plan2.argv
+
+
+def test_compile_anchors_relative_output_dir_in_workdir(tmp_path: Path) -> None:
+    # kohya runs with cwd=sd_scripts_dir; a bare "outputs" would strand the
+    # artifact in the engine checkout where collect() never looks.
+    model = tmp_path / "sdxl.safetensors"
+    model.write_bytes(b"")
+    adapter = KohyaAdapter(
+        sd_scripts_dir=tmp_path / "sd-scripts",
+        env_dir=tmp_path / "env",
+        model_paths={"sdxl": model},
+    )
+    workdir = tmp_path / "jobs" / "job1"
+    recipe = Recipe.from_yaml(RECIPE_PATH)
+    plan = adapter.compile(recipe, workdir)
+    out_arg = next(a for a in plan.argv if a.startswith("--output_dir="))
+    assert out_arg == f"--output_dir={workdir / recipe.output_dir}"
 
 
 def test_parse_line_diagnoses_broken_model_path(adapter: KohyaAdapter) -> None:
@@ -137,6 +172,18 @@ def test_parse_line_diagnoses_broken_model_path(adapter: KohyaAdapter) -> None:
     assert event is not None and event.fatal_hint is not None
     assert "base model" in event.fatal_hint
     assert "Download the model again" in event.fatal_hint
+
+
+def test_parse_line_diagnoses_bitsandbytes_breakage(adapter: KohyaAdapter) -> None:
+    # bnb 0.44 + triton 3.x (torch 2.7): triton.ops is gone, kohya reports
+    # "No bitsandbytes". Both lines must name the repair.
+    for line in (
+        "ModuleNotFoundError: No module named 'triton.ops'",
+        "ImportError: No bitsandbytes / bitsandbytesがインストールされていないようです",
+    ):
+        event = adapter.parse_line(line)
+        assert event is not None and event.fatal_hint is not None
+        assert "loraforge setup" in event.fatal_hint
 
 
 def test_parse_line_diagnoses_numpy_mismatch(adapter: KohyaAdapter) -> None:
@@ -173,8 +220,10 @@ def test_collect_finds_newest_artifact(adapter: KohyaAdapter, tmp_path: Path) ->
 
 
 def test_collect_empty_is_a_clear_error(adapter: KohyaAdapter, tmp_path: Path) -> None:
+    empty_workdir = tmp_path / "job-without-artifacts"
+    empty_workdir.mkdir()
     with pytest.raises(FileNotFoundError, match=r"no \.safetensors artifact"):
-        adapter.collect(tmp_path)
+        adapter.collect(empty_workdir)
 
 
 def test_check_environment_reports_missing_pieces(adapter: KohyaAdapter) -> None:

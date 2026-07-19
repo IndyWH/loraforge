@@ -78,6 +78,7 @@ def test_fresh_machine_plans_all_five_steps(tmp_path: Path) -> None:
     assert reqs.cwd == boot.paths.checkout  # requirements.txt paths resolve in the checkout
     # compat pins install last, so requirements.txt can't re-loosen them
     assert "numpy<2" in pins.argv
+    assert "bitsandbytes==0.49.2" in pins.argv  # 0.44 dies on triton 3.x (torch 2.7)
 
 
 def test_blackwell_plans_cu128_wheels(tmp_path: Path) -> None:

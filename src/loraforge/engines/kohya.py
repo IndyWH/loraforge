@@ -11,7 +11,9 @@ a data edit, mirroring the capability-matrix philosophy.
 
 from __future__ import annotations
 
+import os
 import re
+import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -82,6 +84,24 @@ _FATAL_MARKERS: tuple[tuple[str, str], ...] = (
         "looks broken or incomplete. Download the model again in the Models "
         "step, then start the job again.",
     ),
+    (
+        "Weights only load failed",
+        "The training engine couldn't read the base model file — it doesn't "
+        "look like a valid safetensors checkpoint. Download the model again "
+        "in the Models step, then start the job again.",
+    ),
+    (
+        "No module named 'triton.ops'",
+        "The training engine's Python packages are mismatched (its 8-bit "
+        "optimizer library is too old for this PyTorch). Run `loraforge "
+        "setup` to repair the engine environment, then start the job again.",
+    ),
+    (
+        "No bitsandbytes",
+        "The training engine's 8-bit optimizer library is missing or broken. "
+        "Run `loraforge setup` to repair the engine environment, then start "
+        "the job again.",
+    ),
 )
 
 
@@ -130,10 +150,13 @@ class KohyaAdapter:
                 f"base model for '{recipe.model}' has not been downloaded yet — "
                 "run the model download step first"
             )
-        # The HF cache serves files as snapshot symlinks; kohya readlink()s
-        # those to a *relative* blob path and then can't find it. Engines get
-        # fully resolved paths, never symlinks.
-        base_model = base_model.resolve()
+        base_model = self._engine_loadable(base_model, workdir)
+        # Relative output_dir means "under the job workdir" — kohya runs with
+        # cwd=sd_scripts_dir, where a bare "outputs" would strand the artifact
+        # outside collect()'s reach.
+        output_dir = recipe.output_dir
+        if not output_dir.is_absolute():
+            output_dir = workdir / output_dir
 
         config_files: dict[Path, str] = {
             workdir / "dataset.toml": self._render_dataset_toml(recipe)
@@ -146,7 +169,7 @@ class KohyaAdapter:
             str(self.sd_scripts_dir / spec.script),
             f"{spec.base_model_arg}={base_model}",
             f"--dataset_config={workdir / 'dataset.toml'}",
-            f"--output_dir={recipe.output_dir}",
+            f"--output_dir={output_dir}",
             f"--output_name={recipe.name}",
             "--save_model_as=safetensors",
             # PEFT
@@ -197,7 +220,8 @@ class KohyaAdapter:
                     f"{', '.join(missing)} — run the model download step first"
                 )
             for asset_name, flag in spec.required_assets.items():
-                argv.append(f"{flag}={assets[asset_name].resolve()}")  # same symlink rule
+                loadable = self._engine_loadable(assets[asset_name], workdir)
+                argv.append(f"{flag}={loadable}")
 
         return LaunchPlan(argv=argv, cwd=self.sd_scripts_dir, config_files=config_files)
 
@@ -225,6 +249,39 @@ class KohyaAdapter:
                 f"training exited cleanly but no .safetensors artifact found under {workdir}"
             )
         return TrainResult(artifact=candidates[0], format="kohya", logs=workdir / "logs")
+
+    @staticmethod
+    def _engine_loadable(path: Path, workdir: Path) -> Path:
+        """A path kohya can actually load: a real file ending in .safetensors.
+
+        kohya readlink()s symlinks to their raw (often relative) target and
+        switches loaders on the file extension — the HF cache's snapshot
+        symlink → extensionless blob fails both ways. Hardlink the resolved
+        file under a shared jobs/_model_links/ dir with its proper name
+        (same filesystem: instant, no disk cost; falls back to a one-time
+        copy across filesystems). Real *.safetensors paths pass through.
+        """
+        resolved = path.resolve()
+        if not resolved.is_file():
+            raise ValueError(
+                f"model file is missing at {path} — it may have been moved or "
+                "deleted; download the model again in the Models step"
+            )
+        if not path.is_symlink() and resolved.suffix == ".safetensors":
+            return resolved
+        name = path.name if path.suffix == ".safetensors" else f"{path.name}.safetensors"
+        links_dir = workdir.parent / "_model_links"
+        target = links_dir / name
+        if target.exists():
+            if target.samefile(resolved):
+                return target
+            target.unlink()  # stale link from a re-downloaded model
+        links_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.link(resolved, target)
+        except OSError:  # cache on another filesystem — copy once instead
+            shutil.copyfile(resolved, target)
+        return target
 
     # ── Config rendering ─────────────────────────────────────────────────────
 

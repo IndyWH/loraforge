@@ -63,8 +63,11 @@ KOHYA = EngineSpec(
     python_version="3.10",
     # v0.9.1's requirements let NumPy resolve to 2.x, but its opencv-python
     # wheel is built against NumPy 1.x — cv2 then fails at import and every
-    # training run dies at startup with exit code 1.
-    extra_pins=("numpy<2",),
+    # training run dies at startup with exit code 1. bitsandbytes 0.44 (the
+    # requirements pin) imports triton.ops, removed in the Triton 3.x that
+    # ships with torch 2.7 — AdamW8bit then dies at optimizer setup; 0.49.2
+    # is the version verified against a real GPU run.
+    extra_pins=("numpy<2", "bitsandbytes==0.49.2"),
 )
 
 ENGINE_SPECS: dict[str, EngineSpec] = {KOHYA.key: KOHYA}
