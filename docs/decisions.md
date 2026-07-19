@@ -184,5 +184,7 @@ port. `pick_port()` returns a listening socket that uvicorn adopts
 → 202, then cancel all jobs (keep=True) → stop downloads → flip the exit
 flag, in that order, because WS streams only close on terminal events and
 uvicorn's graceful shutdown waits for open connections. Shell-side
-force-kill of the process group/Job Object is only a logged fallback.
-Preferred port 8471, ephemeral fallback.
+force-kill of the process group/Job Object comes only after a 25s wait
+(the Python cancel path has its own 10s terminate→kill grace before the
+exit flag flips) and only as a logged fallback. Preferred port 8471,
+ephemeral fallback.

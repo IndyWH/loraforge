@@ -72,10 +72,13 @@ The ordering is load-bearing, not tidiness: uvicorn's graceful shutdown
 waits for open connections, and job/download WebSocket streams only close
 on a terminal event — flipping the exit flag first can deadlock exit with
 a WS attached. With no hook wired (tests/embedding) the endpoint 503s with
-instructions. The shell's exit sequence is: call shutdown → wait up to 10s
+instructions. The shell's exit sequence is: call shutdown → wait up to 25s
 for child exit → force-kill the process group / Job Object as fallback.
-The fallback should be logged as abnormal, not routine (it also covers a
-truly stalled HF thread).
+25s, not 10: the Python cancel path gives the trainer its own 10s
+terminate→kill grace *before* the exit flag flips, so a 10s shell wait
+could force-kill mid-checkpointed-stop — the exact flow the
+close-while-training dialog promises to protect. The fallback should be
+logged as abnormal, not routine (it also covers a truly stalled HF thread).
 
 Close-while-training (product decision, settled): intercept the window
 close event; ask the server whether a job is running (existing `/jobs`
@@ -128,6 +131,8 @@ job state interpretation beyond "is the jobs list non-empty".
    tree fully gone (verify with `ps`/Task Manager: no orphaned python).
 4. Kill -9 the shell mid-run → orphaned server is the known limitation of
    step A; note it in the doc (revisit with tray/reattach later if wanted).
+   Windows is already covered: KILL_ON_JOB_CLOSE kills the server tree when
+   the shell's job handle closes, so the limitation is Linux-only.
 5. Second launch focuses the first window.
 6. Port 8471 occupied by `python -m http.server 8471` → app still starts,
    webview lands on the ephemeral port.
@@ -160,5 +165,7 @@ job state interpretation beyond "is the jobs list non-empty".
     all jobs (keep=True) → stop downloads → flip the exit flag, in that
     order, because WS streams only close on terminal events and uvicorn's
     graceful shutdown waits for open connections. Shell-side force-kill of
-    the process group/Job Object is only a logged fallback. Preferred port
-    8471, ephemeral fallback.
+    the process group/Job Object comes only after a 25s wait (the Python
+    cancel path has its own 10s terminate→kill grace before the exit flag
+    flips) and only as a logged fallback. Preferred port 8471, ephemeral
+    fallback.

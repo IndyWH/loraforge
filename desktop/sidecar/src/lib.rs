@@ -3,7 +3,7 @@
 //! Implements the shell side of the contract in `docs/design/tauri-shell.md`
 //! (decision 18): spawn `loraforge serve`, read stdout until the
 //! `LORAFORGE_READY ` prefix, tee everything to `<data_root>/logs/server.log`
-//! (keep last 3), and shut down via `POST /control/shutdown` with a 10s wait
+//! (keep last 3), and shut down via `POST /control/shutdown` with a 25s wait
 //! before a logged force-kill of the process group (Unix) / Job Object
 //! (Windows).
 //!
@@ -26,7 +26,10 @@ pub const READY_PREFIX: &str = "LORAFORGE_READY ";
 /// No ready line within this window → error page, no silent blank window.
 pub const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
 /// After POST /control/shutdown, wait this long before force-killing.
-pub const SHUTDOWN_WAIT: Duration = Duration::from_secs(10);
+/// Must comfortably exceed the Python cancel path's own 10s terminate→kill
+/// grace (which runs before the exit flag even flips), or close-while-training
+/// force-kills mid-checkpointed-stop — the exact flow the dialog protects.
+pub const SHUTDOWN_WAIT: Duration = Duration::from_secs(25);
 /// server.log rotation depth: server.log + .1 + .2.
 pub const LOG_KEEP: usize = 3;
 
@@ -225,7 +228,7 @@ impl std::error::Error for LaunchError {}
 pub enum ShutdownOutcome {
     /// The server exited on its own after `POST /control/shutdown`.
     Graceful { exit_code: Option<i32> },
-    /// The 10s wait ran out and the process group / Job Object was killed.
+    /// The 25s wait ran out and the process group / Job Object was killed.
     /// Logged as abnormal — this is a fallback, never routine.
     ForceKilled,
 }
@@ -308,8 +311,12 @@ impl Sidecar {
                 Ok(sidecar)
             }
             Ok(StdoutMsg::Eof) => {
-                // Child closed stdout without announcing: it exited (or is
-                // dying) early. Reap it and report with the log location.
+                // Child closed stdout without announcing. Usually it exited
+                // (kill is a no-op and wait returns the real status), but a
+                // child that closed stdout yet keeps running must not hang
+                // the shell in wait() forever — kill first, like the timeout
+                // arm.
+                sidecar.force_kill();
                 let status = sidecar.child.wait().ok().and_then(|s| s.code());
                 let log_path = sidecar.log_path.clone();
                 sidecar.finalize_logs();

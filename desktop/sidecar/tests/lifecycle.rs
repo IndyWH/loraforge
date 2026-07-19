@@ -116,6 +116,21 @@ fn early_exit_reports_status_and_log() {
 }
 
 #[test]
+fn closed_stdout_with_live_child_does_not_hang_launch() {
+    // A child that closes stdout but keeps running: launch must kill it and
+    // return promptly, not sit in wait() forever.
+    let dir = tempfile::tempdir().unwrap();
+    let started = std::time::Instant::now();
+    let err = Sidecar::launch(&sh("exec 1>&-; sleep 60"), &opts(dir.path()))
+        .expect_err("stdout closed without a ready line");
+    assert!(matches!(err, LaunchError::ExitedEarly { .. }), "got: {err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "launch hung on a live child with closed stdout"
+    );
+}
+
+#[test]
 fn handshake_timeout_kills_the_child() {
     let dir = tempfile::tempdir().unwrap();
     let mut options = opts(dir.path());
