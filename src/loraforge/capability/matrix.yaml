@@ -30,16 +30,27 @@ models:
       file: sd_xl_base_1.0.safetensors
       download_gb: 7
       gated: false
+    # Thresholds measured 2026-07-19 on an RTX 4090/24GB (WSL2, bf16,
+    # AdamW8bit, latents precached), per decision 20:
+    #   b4 + checkpointing @1024 → ~12.3GB appetite, 1.63 s/step
+    #   b2 + checkpointing @1024 → ~10.4GB appetite, 1.0–1.2 s/step
+    # The former comfortable (b4, NO checkpointing) exceeded 24GB and spilled
+    # silently into system RAM at ~46 s/step — no gaming card fits it.
+    # max_seconds_per_step is the spill guard (decision 20): generous — the
+    # ceiling is far above any healthy card, because spill is ~40x, not ~20%.
     presets:
       - name: comfortable
-        min_free_vram_mb: 15000
-        settings: {resolution: 1024, batch_size: 4, gradient_checkpointing: false}
+        min_free_vram_mb: 14000
+        settings: {resolution: 1024, batch_size: 4, gradient_checkpointing: true,
+                   max_seconds_per_step: 30}
       - name: standard
-        min_free_vram_mb: 10500
-        settings: {resolution: 1024, batch_size: 2, gradient_checkpointing: true}
+        min_free_vram_mb: 11500
+        settings: {resolution: 1024, batch_size: 2, gradient_checkpointing: true,
+                   max_seconds_per_step: 25}
       - name: tight
         min_free_vram_mb: 7000
-        settings: {resolution: 768, batch_size: 1, gradient_checkpointing: true}
+        settings: {resolution: 768, batch_size: 1, gradient_checkpointing: true,
+                   max_seconds_per_step: 20}
     not_available_reason: "SDXL LoRA needs ~7GB free VRAM even at 768px."
 
   flux_dev:
@@ -57,15 +68,20 @@ models:
         t5xxl: {repo: comfyanonymous/flux_text_encoders, file: t5xxl_fp16.safetensors}
         ae: {repo: black-forest-labs/FLUX.1-dev, file: ae.safetensors}
     presets:
+      # Spill ceilings here are extra-generous: flux is unmeasured and block
+      # swap makes slow cards legitimately slow (decision 20).
       - name: comfortable
         min_free_vram_mb: 22000
-        settings: {resolution: 1024, batch_size: 1, fp8_base: true, blocks_to_swap: 0}
+        settings: {resolution: 1024, batch_size: 1, fp8_base: true, blocks_to_swap: 0,
+                   max_seconds_per_step: 120}
       - name: standard
         min_free_vram_mb: 15000
-        settings: {resolution: 1024, batch_size: 1, fp8_base: true, blocks_to_swap: 18}
+        settings: {resolution: 1024, batch_size: 1, fp8_base: true, blocks_to_swap: 18,
+                   max_seconds_per_step: 240}
       - name: tight
         min_free_vram_mb: 11000
-        settings: {resolution: 512, batch_size: 1, fp8_base: true, blocks_to_swap: 34}
+        settings: {resolution: 512, batch_size: 1, fp8_base: true, blocks_to_swap: 34,
+                   max_seconds_per_step: 240}
         min_ram_mb: 32000    # aggressive block swap needs host RAM to swap into
     not_available_reason: >-
       FLUX LoRA needs ~11GB free VRAM (with fp8 base + block swap) and 32GB
@@ -82,10 +98,13 @@ models:
       download_gb: 4
       gated: false
     presets:
+      # sd15 is unmeasured; ceilings are generous multiples of typical rates.
       - name: standard
         min_free_vram_mb: 5500
-        settings: {resolution: 512, batch_size: 4, gradient_checkpointing: false}
+        settings: {resolution: 512, batch_size: 4, gradient_checkpointing: false,
+                   max_seconds_per_step: 15}
       - name: tight
         min_free_vram_mb: 3800
-        settings: {resolution: 512, batch_size: 1, gradient_checkpointing: true}
+        settings: {resolution: 512, batch_size: 1, gradient_checkpointing: true,
+                   max_seconds_per_step: 15}
     not_available_reason: "SD1.5 LoRA needs ~4GB free VRAM — very few cards fall below this."

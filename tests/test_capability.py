@@ -65,7 +65,10 @@ def test_3060_ampere_cannot_use_fp8_flux_presets() -> None:
     # fp8_base and Ampere has no FP8 silicon → must be unavailable, not OOM-later.
     caps = resolve(RTX_3060)
     assert caps.get("flux_dev").status is Availability.UNAVAILABLE
-    assert caps.get("sdxl").preset_name == "standard"
+    # standard's measured threshold is 11500 free (10.4GB appetite + margin);
+    # a 3060 12GB with 11.4GB free lands on tight — deliberate: a preset that
+    # silently spills costs more trust than 768px (decision 20).
+    assert caps.get("sdxl").preset_name == "tight"
 
 
 def test_4090_gets_comfortable_everything() -> None:

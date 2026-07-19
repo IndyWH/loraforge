@@ -199,3 +199,16 @@ kohya adapter owns engine-specific path materialization
 failure reaching the generic exit-code message means a fatal marker is
 missing — the marker table grows with each diagnosed crash, tests pinning
 the actionable words.
+
+## 20. Capability thresholds come from measured runs; spill is OOM's sneaky sibling
+
+Preset VRAM thresholds are set from measured appetite on real hardware
+(runs recorded in matrix.yaml comments), not estimates — the founding
+example: "comfortable" passed its own 15GB check yet silently spilled a
+24GB card into system RAM at ~46 s/step, because the driver spills
+instead of OOMing and the step-down ladder never fired. Silent sysmem
+spill is therefore treated as OOM's sneaky sibling: each preset carries a
+generous max_seconds_per_step ceiling as matrix data (spill is ~40x, not
+~20% — ceilings sit far above any healthy card), the runner takes the
+median of steps 3–10 (warmup excluded), and a breach feeds the same
+step-down ladder as a pseudo-OOM with a message naming the real cause.

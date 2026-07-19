@@ -75,6 +75,12 @@ class TrainSection(BaseModel):
     )
     sample_every_steps: int = Field(200, ge=0, description="0 disables preview samples")
     sample_prompts: list[str] = Field(default_factory=list)
+    max_seconds_per_step: float = Field(
+        0,
+        ge=0,
+        description="Spill guard: steady-state s/step ceiling from the capability "
+        "matrix; a breach is treated as OOM's sneaky sibling. 0 disables",
+    )
 
 
 class Recipe(BaseModel):

@@ -30,6 +30,8 @@ import asyncio
 import contextlib
 import json
 import os
+import statistics
+import time
 import traceback
 import uuid
 from dataclasses import dataclass, field
@@ -39,13 +41,14 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import psutil
 
+from loraforge.engines.base import ProgressEvent
 from loraforge.jobs.stepdown import step_down, vram_knobs
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable
     from pathlib import Path
 
-    from loraforge.engines.base import EngineAdapter, LaunchPlan, ProgressEvent
+    from loraforge.engines.base import EngineAdapter, LaunchPlan
     from loraforge.recipes.schema import Recipe
 
 # ── States and events ────────────────────────────────────────────────────────
@@ -212,11 +215,13 @@ class JobRunner:
         spawn: Callable[[LaunchPlan], Awaitable[Any]] | None = None,
         max_retries: int = 2,  # OOM step-down retries per job
         grace_seconds: float = 10.0,  # terminate → kill escalation window
+        clock: Callable[[], float] | None = None,  # injectable for spill tests
     ) -> None:
         self.adapter = adapter
         self.jobs_root = jobs_root
         self.max_retries = max_retries
         self.grace_seconds = grace_seconds
+        self._clock = clock or time.monotonic
         self._spawn = spawn or _spawn_subprocess
         self._jobs: dict[str, Job] = {}
         self._queue: asyncio.Queue[Job] = asyncio.Queue()
@@ -416,7 +421,10 @@ class JobRunner:
                 return
             job.proc = proc
             oom: ProgressEvent | None = None
+            spill = False  # sysmem spill: OOM's sneaky sibling (decision 20)
             fatal_hint: str | None = None  # adapter's diagnosis of a doomed run
+            step_times: dict[int, float] = {}
+            spill_checked = False
             with job.log_path.open("a", encoding="utf-8") as log:
                 while not job.cancel_requested:
                     line = await proc.next_line()
@@ -432,6 +440,28 @@ class JobRunner:
                     if event.is_oom:
                         oom = event
                         break
+                    # Spill guard: the driver spills to system RAM instead of
+                    # OOMing, so a preset that doesn't fit just runs ~40x slow
+                    # forever. Median of steps 3-10 (warmup excluded) over the
+                    # matrix ceiling → treat exactly like an OOM.
+                    ceiling = job.recipe.train.max_seconds_per_step
+                    if event.step is not None and event.step not in step_times:
+                        step_times[event.step] = self._clock()
+                        if ceiling > 0 and not spill_checked and event.step >= 10:
+                            spill_checked = True
+                            deltas = [
+                                step_times[s] - step_times[s - 1]
+                                for s in range(4, 11)
+                                if s in step_times and s - 1 in step_times
+                            ]
+                            if len(deltas) >= 3 and statistics.median(deltas) > ceiling:
+                                spill = True
+                                oom = ProgressEvent(
+                                    is_oom=True,
+                                    message=f"steady state {statistics.median(deltas):.0f}s"
+                                    f"/step exceeds the preset's {ceiling:g}s ceiling",
+                                )
+                                break
             job.proc = None
 
             if job.cancel_requested:
@@ -459,12 +489,18 @@ class JobRunner:
 
             if oom is not None:
                 await self._stop(proc)
+                cause = (
+                    "Training is running far slower than this preset ever should "
+                    "— usually memory spilling into system RAM"
+                    if spill
+                    else "Your GPU ran out of memory"
+                )
                 tried = [s["message"] for s in job.stepdowns]
                 if retries >= self.max_retries:
                     self._transition(
                         job,
                         JobState.FAILED,
-                        "Your GPU ran out of memory even after automatic adjustments "
+                        f"{cause} even after automatic adjustments "
                         f"(tried: {' then: '.join(tried)}). {_OOM_ADVICE}",
                     )
                     return
@@ -474,7 +510,7 @@ class JobRunner:
                     self._transition(
                         job,
                         JobState.FAILED,
-                        "Your GPU ran out of memory and there are no tighter settings "
+                        f"{cause} and there are no tighter settings "
                         f"left to try.{already} {_OOM_ADVICE}",
                     )
                     return
@@ -491,8 +527,7 @@ class JobRunner:
                 self._transition(
                     job,
                     JobState.OOM_STEPDOWN,
-                    f"Your GPU ran out of memory. {stepped.message} "
-                    f"Retrying ({retries}/{self.max_retries}).",
+                    f"{cause}. {stepped.message} Retrying ({retries}/{self.max_retries}).",
                 )
                 continue
 

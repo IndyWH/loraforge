@@ -19,7 +19,13 @@ export const defaultKnobs: AdvancedKnobs = {
   resolution: null,
 };
 
-const TRAIN_KEYS = ["batch_size", "gradient_checkpointing", "fp8_base", "blocks_to_swap"];
+const TRAIN_KEYS = [
+  "batch_size",
+  "gradient_checkpointing",
+  "fp8_base",
+  "blocks_to_swap",
+  "max_seconds_per_step", // spill guard: matrix data the runner enforces
+];
 
 export function buildRecipe(
   name: string,

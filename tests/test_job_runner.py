@@ -581,3 +581,58 @@ def test_engine_process_splits_tqdm_carriage_returns(tmp_path: Path) -> None:
         assert lines[2].endswith("avr_loss=0.13]")
 
     asyncio.run(scenario())
+
+
+# ── Spill guard: OOM's sneaky sibling (decision 20) ──────────────────────────
+
+
+def test_slow_steps_trigger_pseudo_oom_into_the_ladder(tmp_path: Path) -> None:
+    # The driver spills to system RAM instead of OOMing, so a too-big preset
+    # just runs ~40x slow forever. Steady-state (median of steps 3-10) over
+    # the matrix ceiling must feed the SAME step-down ladder, with a message
+    # naming the real cause.
+    async def scenario() -> None:
+        slow = FakeProcess([f"step {i}/100\n" for i in range(1, 12)])
+        healthy = FakeProcess(["step 100/100\n"])
+        ticks = iter(range(0, 100_000, 60))  # every clock() call is 60s later
+        runner = JobRunner(
+            FakeAdapter(),
+            tmp_path,
+            spawn=FakeSpawner(slow, healthy),
+            clock=lambda: float(next(ticks)),
+        )
+        job = await runner.submit(
+            make_recipe(
+                tmp_path, **{"model": "flux_dev", "train.max_seconds_per_step": 30}
+            )
+        )
+        events = await asyncio.wait_for(drain(runner, job.id), timeout=5)
+        await runner.close()
+
+        assert states(events) == [
+            "queued", "preparing", "running", "oom_stepdown", "preparing", "running", "completed",
+        ]
+        stepdown = next(e for e in events if e.state is JobState.OOM_STEPDOWN)
+        assert "far slower than this preset ever should" in stepdown.message
+        assert "system RAM" in stepdown.message
+        assert "ran out of memory" not in stepdown.message  # names the REAL cause
+        assert slow.terminated  # the spilling process tree was shut down
+
+    asyncio.run(scenario())
+
+
+def test_healthy_speed_never_triggers_the_spill_guard(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        proc = FakeProcess([f"step {i}/12\n" for i in range(1, 13)])
+        ticks = iter(range(0, 100_000, 2))  # 2s/step — comfortably under a 30s ceiling
+        runner = JobRunner(
+            FakeAdapter(), tmp_path, spawn=FakeSpawner(proc), clock=lambda: float(next(ticks))
+        )
+        job = await runner.submit(
+            make_recipe(tmp_path, **{"train.max_seconds_per_step": 30})
+        )
+        events = await asyncio.wait_for(drain(runner, job.id), timeout=5)
+        await runner.close()
+        assert states(events) == ["queued", "preparing", "running", "completed"]
+
+    asyncio.run(scenario())
