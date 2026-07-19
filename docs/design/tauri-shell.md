@@ -1,6 +1,9 @@
 # Design brief — Phase: Tauri shell (step A)
 
-Status: agreed 2026-07-19 (design session). Scope: desktop shell + sidecar
+Status: agreed 2026-07-19 (design session); updated same day, twice, to
+as-built after the Python side landed and was reviewed. THIS FILE IS THE
+CONTRACT — replace any older copy wholesale; an earlier draft briefly lived
+in the repo and caused a reconciliation round. Scope: desktop shell + sidecar
 lifecycle + packaging config. **Not** in this step: first-run uv/engine
 bootstrap UX (that is step B, next session). Assume a working dev checkout
 (env exists, `uv run loraforge serve` works, `ui/dist` is built).
@@ -31,35 +34,48 @@ in a Job Object (or equivalent) so a force-kill can take the whole tree —
 Windows has no SIGTERM (decision 13) and TerminateProcess alone orphans
 grandchildren.
 
-Ready handshake. The server gains an explicit announce: when it is
-accepting connections it prints one JSON line to stdout:
-`{"event": "ready", "port": 8471, "url": "http://127.0.0.1:8471", "pid": 12345}`
-The shell reads child stdout line-by-line until it sees `"event": "ready"`,
-then navigates the webview to `url`. Do not parse uvicorn's log banner —
+Ready handshake (as built). `loraforge serve` unconditionally prints one
+line to stdout once its socket is listening (harmless in a terminal, and
+the shell depends on it — no flag to forget):
+`LORAFORGE_READY {"url": "http://127.0.0.1:8471", "port": 8471, "pid": 12345}`
+The shell reads child stdout line-by-line until a line starts with
+`LORAFORGE_READY`, parses the JSON after the prefix, and navigates the
+webview to `url` (pid is for watching a server that dies after announcing).
+The prefix is the ready marker — cheap starts_with in Rust, no need to
+attempt JSON parsing on every line. Do not parse uvicorn's log banner —
 that's someone else's format. Everything else on stdout/stderr is tee'd to
 `<data_root>/logs/server.log` (rotate: keep last 3), because that file is
 tomorrow's bug report attachment alongside `loraforge diagnose`.
 
-Port policy. Try 8471 first (it's in the README and users' muscle memory);
-if the bind fails, fall back to an ephemeral port: bind port 0, read the
-assigned port, close, then start uvicorn on it. The tiny TOCTOU race is
-accepted — single machine, loopback. Implement as `pick_port(preferred=8471)`
-in `server/run.py` with tests (preferred free → preferred; preferred held by
-a test socket → something else, and it's free). The announce line always
-carries the real port, so the shell never assumes.
+Port policy (as built). `pick_port(preferred=8471)` in `server/run.py`
+binds and listens on the preferred port, falling back to an OS-assigned
+ephemeral port if taken, and returns the *listening socket*, which uvicorn
+adopts via `sockets=[sock]`. No close-and-rebind, no TOCTOU race, and
+connections queue in the backlog from the moment the announce prints.
+SO_REUSEADDR is deliberately skipped on Windows (port-stealing semantics).
+The announce line always carries the real port, so the shell never assumes.
 
 Timeout. If no ready line within 30s or the child exits early, show the
 bundled error page with the last ~50 lines of server.log and a "copy log
 path" affordance. No silent blank window.
 
-Shutdown. New endpoint `POST /control/shutdown` (server-side, loopback-only
-like everything else — LocalRequestsOnly already blocks cross-origin browser
-writes): cancel any running/queued job through the existing runner
-cancellation (psutil tree-kill, checkpointed stop — this is the tested
-path), stop active downloads, then flip uvicorn's `should_exit`. Returns
-202 immediately. The shell's exit sequence is: call shutdown → wait up to
-10s for child exit → force-kill the process group / Job Object as fallback.
-The fallback should be logged as abnormal, not routine.
+Shutdown (as built). `POST /control/shutdown` (loopback-only like
+everything else — LocalRequestsOnly already blocks cross-origin browser
+writes) returns 202 `{"stopping": true}` immediately and runs the ordered
+sequence in a background task: `runner.cancel_all(keep=True)` (checkpointed
+stop for a running job — matching the close dialog's promise — plain cancel
+for queued ones) → `downloads.stop_all()` (cancels the wrapping task and
+pushes a terminal event; the HF hub thread can't be interrupted mid-file,
+but partials resume from the cache next launch) → flip uvicorn's
+`should_exit` via the `ServerDeps.request_shutdown` hook wired in `serve()`.
+The ordering is load-bearing, not tidiness: uvicorn's graceful shutdown
+waits for open connections, and job/download WebSocket streams only close
+on a terminal event — flipping the exit flag first can deadlock exit with
+a WS attached. With no hook wired (tests/embedding) the endpoint 503s with
+instructions. The shell's exit sequence is: call shutdown → wait up to 10s
+for child exit → force-kill the process group / Job Object as fallback.
+The fallback should be logged as abnormal, not routine (it also covers a
+truly stalled HF thread).
 
 Close-while-training (product decision, settled): intercept the window
 close event; ask the server whether a job is running (existing `/jobs`
@@ -135,8 +151,14 @@ job state interpretation beyond "is the jobs list non-empty".
     when real users ask for close-and-keep-training.
 
 18. **Sidecar contract: stdout-announced readiness, endpoint-driven
-    shutdown.** The server prints a single JSON ready line (port, url, pid);
-    the shell never parses uvicorn logs and never assumes the port.
-    Shutdown is `POST /control/shutdown` (cancel jobs → stop downloads →
-    exit), with shell-side force-kill of the process group/Job Object only
-    as a logged fallback. Preferred port 8471, ephemeral fallback.
+    ordered shutdown.** `loraforge serve` unconditionally prints a single
+    prefix-tagged ready line — `LORAFORGE_READY {"url", "port", "pid"}` —
+    once its socket is listening; the shell matches the prefix, never
+    parses uvicorn logs, and never assumes the port. `pick_port()` returns
+    a listening socket that uvicorn adopts (`sockets=[sock]`), so the
+    handshake is race-free. `POST /control/shutdown` → 202, then cancel
+    all jobs (keep=True) → stop downloads → flip the exit flag, in that
+    order, because WS streams only close on terminal events and uvicorn's
+    graceful shutdown waits for open connections. Shell-side force-kill of
+    the process group/Job Object is only a logged fallback. Preferred port
+    8471, ephemeral fallback.

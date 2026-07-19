@@ -174,10 +174,15 @@ reattach complexity before anyone has asked for it) and silent kill (losing
 a 3-hour run to a misclick contradicts the graceful-degradation brand).
 Revisit tray when real users ask for close-and-keep-training.
 
-## 18. Sidecar contract: stdout-announced readiness, endpoint-driven shutdown
+## 18. Sidecar contract: stdout-announced readiness, endpoint-driven ordered shutdown
 
-The server prints a single JSON ready line (port, url, pid); the shell never
-parses uvicorn logs and never assumes the port. Shutdown is
-`POST /control/shutdown` (cancel jobs → stop downloads → exit), with
-shell-side force-kill of the process group/Job Object only as a logged
-fallback. Preferred port 8471, ephemeral fallback.
+`loraforge serve` unconditionally prints a single prefix-tagged ready line —
+`LORAFORGE_READY {"url", "port", "pid"}` — once its socket is listening; the
+shell matches the prefix, never parses uvicorn logs, and never assumes the
+port. `pick_port()` returns a listening socket that uvicorn adopts
+(`sockets=[sock]`), so the handshake is race-free. `POST /control/shutdown`
+→ 202, then cancel all jobs (keep=True) → stop downloads → flip the exit
+flag, in that order, because WS streams only close on terminal events and
+uvicorn's graceful shutdown waits for open connections. Shell-side
+force-kill of the process group/Job Object is only a logged fallback.
+Preferred port 8471, ephemeral fallback.
