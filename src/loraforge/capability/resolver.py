@@ -65,7 +65,19 @@ def load_matrix(path: Path | None = None) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def resolve(report: HardwareReport, matrix: dict[str, Any] | None = None) -> CapabilityReport:
+def resolve(
+    report: HardwareReport,
+    matrix: dict[str, Any] | None = None,
+    force_presets: dict[str, str] | None = None,
+) -> CapabilityReport:
+    """Resolve, optionally forcing named presets past the hardware-fit checks.
+
+    ``force_presets`` ({model_key: preset_name}) exists for measurement runs
+    (decision 20): a big card deliberately running a tight preset to record
+    its real appetite. Settings still come verbatim from the matrix — never
+    hand-assembled — and a warning says the checks were bypassed. Environment
+    blocks (wrong torch wheel) still apply; they are facts, not fit.
+    """
     matrix = matrix or load_matrix()
     gpu = report.primary_gpu
     warnings: list[str] = []
@@ -127,15 +139,29 @@ def resolve(report: HardwareReport, matrix: dict[str, Any] | None = None) -> Cap
             continue
 
         chosen: dict[str, Any] | None = None
-        for preset in spec["presets"]:  # ordered best → tightest
-            if vram_budget < preset["min_free_vram_mb"]:
-                continue
-            if (min_ram := preset.get("min_ram_mb")) and (report.ram_total_mb or 0) < min_ram:
-                continue
-            if preset["settings"].get("fp8_base") and not fp8_ok:
-                continue  # pre-Ada card: this preset's memory math doesn't hold
-            chosen = preset
-            break
+        if (forced_name := (force_presets or {}).get(key)) is not None:
+            chosen = next((p for p in spec["presets"] if p["name"] == forced_name), None)
+            if chosen is None:
+                names = ", ".join(p["name"] for p in spec["presets"])
+                warnings.append(
+                    f"{key}: no preset named '{forced_name}' to force "
+                    f"(available: {names}) — resolving normally."
+                )
+            else:
+                warnings.append(
+                    f"{key}: preset forced to '{forced_name}' — hardware-fit checks "
+                    "bypassed for this measurement run."
+                )
+        if chosen is None:
+            for preset in spec["presets"]:  # ordered best → tightest
+                if vram_budget < preset["min_free_vram_mb"]:
+                    continue
+                if (min_ram := preset.get("min_ram_mb")) and (report.ram_total_mb or 0) < min_ram:
+                    continue
+                if preset["settings"].get("fp8_base") and not fp8_ok:
+                    continue  # pre-Ada card: this preset's memory math doesn't hold
+                chosen = preset
+                break
 
         if chosen is not None:
             models.append(

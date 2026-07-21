@@ -107,6 +107,19 @@ def test_diagnose_returns_hardware_and_capabilities(tmp_path) -> None:
     assert verdicts["sdxl"]["preset_name"] is not None
 
 
+def test_diagnose_honors_forced_presets(tmp_path) -> None:
+    # `serve --force-preset sdxl=tight` (measurement mode) must reach the UI
+    # through /diagnose: forced preset chosen, warning says checks were bypassed
+    client, deps = make_client(tmp_path)
+    deps.force_presets = {"sdxl": "tight"}
+    with client:
+        data = client.get("/diagnose").json()
+    verdicts = {m["model_key"]: m for m in data["capabilities"]["models"]}
+    assert verdicts["sdxl"]["preset_name"] == "tight"
+    assert verdicts["sdxl"]["settings"]["cache_text_encoder_outputs"] is True
+    assert any("forced" in w for w in data["capabilities"]["warnings"])
+
+
 def test_models_merges_capability_with_download_state(tmp_path) -> None:
     client, _ = make_client(tmp_path)
     with client:

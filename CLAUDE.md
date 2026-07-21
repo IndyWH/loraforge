@@ -150,7 +150,9 @@ Ubuntu+Windows incl. frontend and desktop jobs):
   (human errors verbatim), /jobs (submit/list/get/cancel, WS events
   wrapping runner.events()). Loopback-only bind unless --allow-remote
   (run.ensure_local_bind). DI via ServerDeps; real wiring in
-  run.build_default_deps(). CLI: `loraforge serve`. Hardening:
+  run.build_default_deps(). CLI: `loraforge serve` (`--force-preset
+  sdxl=tight` runs a named preset past the fit checks for decision-20
+  measurement runs). Hardening:
   security.LocalRequestsOnly rejects non-loopback Host (DNS rebinding)
   and cross-origin writes/WS (loopback + Tauri origins allowed; no-Origin
   passes); GET /jobs/{id}/artifact serves the trained LoRA.

@@ -45,6 +45,14 @@ def main(argv: list[str] | None = None) -> int:
         help="bind beyond loopback — exposes an unauthenticated training server; "
         "only with your own auth in front",
     )
+    server.add_argument(
+        "--force-preset",
+        action="append",
+        default=[],
+        metavar="MODEL=PRESET",
+        help="force a capability preset past the hardware-fit checks (e.g. sdxl=tight) "
+        "for a measurement run; repeatable",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "setup":
@@ -52,7 +60,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         from loraforge.server.run import serve  # server deps stay off diagnose's import path
 
-        serve(host=args.host, port=args.port, allow_remote=args.allow_remote)
+        force_presets: dict[str, str] = {}
+        for pair in args.force_preset:
+            model_key, sep, preset = pair.partition("=")
+            if not (sep and model_key and preset):
+                parser.error(f"--force-preset expects MODEL=PRESET, got '{pair}'")
+            force_presets[model_key] = preset
+        serve(
+            host=args.host,
+            port=args.port,
+            allow_remote=args.allow_remote,
+            force_presets=force_presets or None,
+        )
         return 0
 
     report = probe()

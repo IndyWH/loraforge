@@ -71,6 +71,25 @@ def test_3060_ampere_cannot_use_fp8_flux_presets() -> None:
     assert caps.get("sdxl").preset_name == "standard"
 
 
+def test_force_preset_bypasses_fit_checks_with_a_warning() -> None:
+    # measurement mode (decision 20): a 4090 deliberately runs tight so its
+    # real appetite can be recorded — settings come verbatim from the matrix
+    caps = resolve(RTX_4090, force_presets={"sdxl": "tight"})
+    sdxl = caps.get("sdxl")
+    assert sdxl.preset_name == "tight"
+    assert sdxl.settings["cache_text_encoder_outputs"] is True  # real tight, no drift
+    assert any("forced" in w and "sdxl" in w for w in caps.warnings)
+    # other models resolve normally
+    assert caps.get("flux_dev").preset_name == "comfortable"
+
+
+def test_force_preset_unknown_name_falls_back_to_normal_resolution() -> None:
+    caps = resolve(RTX_4090, force_presets={"sdxl": "cosy"})
+    assert caps.get("sdxl").preset_name == "comfortable"
+    warning = next(w for w in caps.warnings if "cosy" in w)
+    assert "tight" in warning  # names the presets that do exist
+
+
 def test_4090_gets_comfortable_everything() -> None:
     caps = resolve(RTX_4090)
     assert caps.get("sdxl").preset_name == "comfortable"

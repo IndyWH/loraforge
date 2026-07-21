@@ -130,6 +130,7 @@ def serve(
     port: int = 8471,
     allow_remote: bool = False,
     deps: ServerDeps | None = None,
+    force_presets: dict[str, str] | None = None,
 ) -> None:
     ensure_local_bind(host, allow_remote)
     import uvicorn
@@ -142,6 +143,10 @@ def serve(
     # Under --allow-remote the Host/Origin checks come off too: the operator
     # fronts their own auth/proxy, and remote Hosts are then legitimate.
     deps = deps or build_default_deps()
+    if force_presets:
+        deps.force_presets = force_presets
+        for model_key, preset in force_presets.items():
+            print(f"MEASUREMENT MODE: {model_key} preset forced to '{preset}'", flush=True)
     app = create_app(deps, local_only=not allow_remote)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=actual_port))
 

@@ -71,6 +71,7 @@ class ServerDeps:
     jobs_root: Path
     probe: Callable[[], HardwareReport]
     matrix: dict[str, Any] | None = None  # None → the bundled capability matrix
+    force_presets: dict[str, str] | None = None  # measurement runs: `serve --force-preset`
     ui_dist: Path | None = None  # built web UI to serve at / (ui/dist), if present
     request_shutdown: Callable[[], None] | None = None  # set by run.serve(); None → no control
 
@@ -109,7 +110,7 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
         problems = deps.runner.adapter.check_environment(None)
         return DiagnoseResponse(
             hardware=report,
-            capabilities=resolve(report, deps.matrix),
+            capabilities=resolve(report, deps.matrix, deps.force_presets),
             engine=EngineStatus(ready=not problems, problems=problems),
         )
 
@@ -117,7 +118,7 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
 
     @app.get("/models", response_model=list[ModelStatus])
     def models() -> list[ModelStatus]:
-        capabilities = resolve(deps.probe(), deps.matrix)
+        capabilities = resolve(deps.probe(), deps.matrix, deps.force_presets)
         entries = []
         for m in capabilities.models:
             facts = deps.downloads.source_facts(m.model_key)
