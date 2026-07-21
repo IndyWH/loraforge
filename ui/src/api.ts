@@ -31,6 +31,7 @@ export interface DiagnoseResponse {
   };
   capabilities: { models: ModelCapability[]; warnings: string[] };
   engine: { ready: boolean; problems: string[] };
+  ui_build: { git: string; built_at: string } | null;
 }
 
 export interface ModelCapability {

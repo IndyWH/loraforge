@@ -83,6 +83,15 @@ def test_force_preset_bypasses_fit_checks_with_a_warning() -> None:
     assert caps.get("flux_dev").preset_name == "comfortable"
 
 
+def test_force_preset_cannot_bypass_the_fp8_silicon_gate() -> None:
+    # fp8-capable silicon is a fact like the wheel block, not a fit threshold:
+    # a forced fp8 preset on Ampere would crash the engine at startup.
+    caps = resolve(RTX_3060, force_presets={"flux_dev": "tight"})
+    assert caps.get("flux_dev").status is Availability.UNAVAILABLE
+    warning = next(w for w in caps.warnings if "flux_dev" in w)
+    assert "fp8" in warning
+
+
 def test_force_preset_unknown_name_falls_back_to_normal_resolution() -> None:
     caps = resolve(RTX_4090, force_presets={"sdxl": "cosy"})
     assert caps.get("sdxl").preset_name == "comfortable"

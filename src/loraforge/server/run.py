@@ -23,7 +23,7 @@ from loraforge.engines.bootstrap import KOHYA, default_data_root, engine_paths
 from loraforge.engines.kohya import KohyaAdapter
 from loraforge.jobs.runner import JobRunner
 from loraforge.probe import probe
-from loraforge.server.app import ServerDeps, create_app
+from loraforge.server.app import ServerDeps, create_app, ui_build_stamp
 from loraforge.server.downloads import DownloadManager
 
 if TYPE_CHECKING:
@@ -143,6 +143,11 @@ def serve(
     # Under --allow-remote the Host/Origin checks come off too: the operator
     # fronts their own auth/proxy, and remote Hosts are then legitimate.
     deps = deps or build_default_deps()
+    if (stamp := ui_build_stamp(deps.ui_dist)) is not None:
+        print(f"ui bundle: {stamp.git} built {stamp.built_at}", flush=True)
+    elif deps.ui_dist is not None:
+        print("ui bundle: no build stamp (predates stamping — rebuild with `npm run build`)",
+              flush=True)
     if force_presets:
         deps.force_presets = force_presets
         for model_key, preset in force_presets.items():

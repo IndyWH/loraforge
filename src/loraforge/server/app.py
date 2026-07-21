@@ -44,6 +44,7 @@ from loraforge.server.schemas import (
     ModelStatus,
     TriggerRequest,
     TriggerResponse,
+    UiBuildStamp,
     ValidateResponse,
 )
 from loraforge.server.security import LocalRequestsOnly
@@ -74,6 +75,22 @@ class ServerDeps:
     force_presets: dict[str, str] | None = None  # measurement runs: `serve --force-preset`
     ui_dist: Path | None = None  # built web UI to serve at / (ui/dist), if present
     request_shutdown: Callable[[], None] | None = None  # set by run.serve(); None → no control
+
+
+def ui_build_stamp(ui_dist: Path | None) -> UiBuildStamp | None:
+    """The served bundle's provenance, read fresh so rebuilds show up live.
+
+    Written by `npm run build` (vite.config.ts build-stamp plugin). A missing
+    or unreadable stamp is not an error — dev servers and pre-stamp bundles
+    simply report None."""
+    if ui_dist is None:
+        return None
+    try:
+        return UiBuildStamp.model_validate_json(
+            (ui_dist / "build-stamp.json").read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
 
 
 def _payload(event: Any) -> dict[str, Any]:
@@ -112,6 +129,7 @@ def create_app(deps: ServerDeps, local_only: bool = True) -> FastAPI:
             hardware=report,
             capabilities=resolve(report, deps.matrix, deps.force_presets),
             engine=EngineStatus(ready=not problems, problems=problems),
+            ui_build=ui_build_stamp(deps.ui_dist),
         )
 
     # ── Models ───────────────────────────────────────────────────────────────

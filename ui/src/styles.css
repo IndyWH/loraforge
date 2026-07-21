@@ -261,3 +261,6 @@ a.dlbtn:hover { background: var(--accent-deep); }
 .g2 { background: radial-gradient(circle at 60% 35%, #6f7d8c, #2b3138 70%); }
 .g3 { background: radial-gradient(circle at 45% 40%, #8c6f7d, #382b31 70%); }
 .g4 { background: radial-gradient(circle at 50% 30%, #6f8c7a, #2b382f 70%); }
+
+/* Served-bundle provenance — quiet by design; it exists to catch stale dist */
+.build-stamp { text-align: center; font-size: 11px; color: var(--muted); opacity: 0.7; padding: 24px 0 16px; }

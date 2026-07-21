@@ -194,6 +194,11 @@ export function App() {
           photos={summary?.included ?? null}
           onReset={reset}
         />
+        {diagnose?.ui_build && (
+          <footer className="build-stamp">
+            build {diagnose.ui_build.git} · {diagnose.ui_build.built_at.slice(0, 16).replace("T", " ")}
+          </footer>
+        )}
       </main>
     </>
   );

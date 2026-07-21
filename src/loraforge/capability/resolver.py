@@ -147,6 +147,15 @@ def resolve(
                     f"{key}: no preset named '{forced_name}' to force "
                     f"(available: {names}) — resolving normally."
                 )
+            elif chosen["settings"].get("fp8_base") and not fp8_ok:
+                # fp8-capable silicon is a fact, not a fit threshold: forcing
+                # past it would crash the engine at startup, not run tighter.
+                warnings.append(
+                    f"{key}: cannot force preset '{forced_name}' — it needs "
+                    f"fp8-capable silicon (Ada or newer) and {gpu.name} has none; "
+                    "resolving normally."
+                )
+                chosen = None
             else:
                 warnings.append(
                     f"{key}: preset forced to '{forced_name}' — hardware-fit checks "

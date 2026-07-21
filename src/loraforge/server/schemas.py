@@ -28,12 +28,23 @@ class EngineStatus(BaseModel):
     problems: list[str]
 
 
+class UiBuildStamp(BaseModel):
+    """Provenance of the served UI bundle (dist/build-stamp.json).
+
+    Exists so a stale bundle — which can silently drop recipe settings the
+    source knows about — is visible in /diagnose and the UI footer."""
+
+    git: str
+    built_at: str
+
+
 class DiagnoseResponse(BaseModel):
     """What the UI's diagnostics page renders."""
 
     hardware: HardwareReport
     capabilities: CapabilityReport
     engine: EngineStatus
+    ui_build: UiBuildStamp | None = None  # None: no built bundle (dev mode) or no stamp
 
 
 class ModelStatus(BaseModel):

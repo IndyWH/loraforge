@@ -107,6 +107,25 @@ def test_diagnose_returns_hardware_and_capabilities(tmp_path) -> None:
     assert verdicts["sdxl"]["preset_name"] is not None
 
 
+def test_diagnose_reports_ui_build_stamp(tmp_path) -> None:
+    # the stale-dist guard: /diagnose carries the served bundle's provenance
+    client, deps = make_client(tmp_path)
+    deps.ui_dist = tmp_path / "dist"
+    deps.ui_dist.mkdir()
+    (deps.ui_dist / "build-stamp.json").write_text(
+        '{"git": "a969612", "built_at": "2026-07-21T09:00:00Z"}'
+    )
+    with client:
+        data = client.get("/diagnose").json()
+    assert data["ui_build"] == {"git": "a969612", "built_at": "2026-07-21T09:00:00Z"}
+
+
+def test_diagnose_without_bundle_has_no_stamp(tmp_path) -> None:
+    client, _ = make_client(tmp_path)  # no ui_dist wired at all (dev mode)
+    with client:
+        assert client.get("/diagnose").json()["ui_build"] is None
+
+
 def test_diagnose_honors_forced_presets(tmp_path) -> None:
     # `serve --force-preset sdxl=tight` (measurement mode) must reach the UI
     # through /diagnose: forced preset chosen, warning says checks were bypassed
