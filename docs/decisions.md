@@ -232,3 +232,11 @@ checkpointing and the resolution notch, matching decision 10's
 cheapest-visible-cost ordering. The three kohya flags travel together in
 compile(); thresholds move only after a measured run per decision 20. FLUX
 presets likely want the same treatment (t5xxl) — unmeasured, later.
+
+Measured 2026-07-21 (see matrix.yaml): the cache freed over 2GB — beating
+the ~1.6GB estimate — and cut step time ~25%, with sampling confirmed flat
+across seven preview events. QA on the first unet-only artifact: identity
+and trigger word held across all samples (consistent same-person output,
+recognizably the subject); likeness was moderate on far-from-dataset
+prompts, unjudged on near-dataset prompts. The 8GB promise is now measured
+fact.
