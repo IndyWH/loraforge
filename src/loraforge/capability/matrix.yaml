@@ -49,9 +49,14 @@ models:
         min_free_vram_mb: 11400
         settings: {resolution: 1024, batch_size: 2, gradient_checkpointing: true,
                    max_seconds_per_step: 25}
-      # tight: text-encoder cache frees ~1.6GB (estimated landing ~7.3GB) at
-      # the cost of unet-only training (decision 21). The 7000 threshold stays
-      # until a measured run confirms the estimate (decision 20).
+      # tight: measured 2026-07-21 on the RTX 4090 (768/b1/ckpt, previews
+      # every 200 steps, full 1500-step runs), per decisions 20/21:
+      #   TE cache ON:  peak 10.2GB card total incl. 7 sample events, minus
+      #                 3.45GB desktop baseline → ~6.8GB appetite, 0.73 s/step
+      #   TE cache OFF (baseline): spot 12.5GB total at step 144 → ~9.1GB
+      #                 appetite, 1.0 s/step — the cache frees >2GB here
+      # Sampling stayed flat with the cache on (text encoders remain on CPU).
+      # unet-only is the trade (decision 21); 7000 threshold confirmed.
       - name: tight
         min_free_vram_mb: 7000
         settings: {resolution: 768, batch_size: 1, gradient_checkpointing: true,
