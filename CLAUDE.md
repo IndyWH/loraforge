@@ -105,26 +105,41 @@ line (cu126 for older cards; cu128+ REQUIRED for Blackwell/RTX 50, sm_120).
 
 ## Current state (as of this file)
 
-Done and tested (18 tests, ruff clean, CI on Ubuntu+Windows):
+Done and tested (pytest + vitest + cargo suites, ruff clean, CI on
+Ubuntu+Windows incl. frontend and desktop jobs):
 - `probe.py` — never crashes, degrades to notes; arch mapping sm→generation
-- `capability/matrix.yaml` + `resolver.py` — sd15/sdxl/flux_dev presets
-- `recipes/schema.py` — Recipe with YAML round-trip + dotted overrides
+- `capability/matrix.yaml` + `resolver.py` — sd15/sdxl/flux_dev presets.
+  SDXL thresholds are MEASURED (decision 20): comments in matrix.yaml record
+  the runs; standard=11400 (10.4GB appetite × ~10% headroom); tight enables
+  cache_text_encoder_outputs (decision 21). Each preset carries a
+  max_seconds_per_step spill-guard ceiling.
+- `recipes/schema.py` — Recipe with YAML round-trip + dotted overrides;
+  train.cache_text_encoder_outputs (unet-only trade, decision 21)
 - `engines/base.py` — EngineAdapter protocol (compile/parse_line/collect/
   check_environment); LaunchPlan/ProgressEvent/TrainResult dataclasses
 - `engines/kohya.py` — compile to accelerate argv + dataset TOML; tqdm/OOM
-  parsing; artifact collection
+  parsing; artifact collection; _FATAL_MARKERS table mapping engine log
+  lines to human diagnoses (rule 5 — grows with each diagnosed crash);
+  _engine_loadable() materializes HF-cache symlinks into real *.safetensors
+  paths kohya can load; TE-cache flags emitted as an inseparable trio
 - `cli.py` — `loraforge diagnose` (also the bug-report generator, `--json`);
   `loraforge setup [--dry-run]` (engine bootstrap)
 - `engines/bootstrap.py` — plan-then-execute engine setup: pinned sd-scripts
   clone (v0.9.1), uv venv on managed CPython, GPU-matched torch wheels
-  (cu126/cu128), state file for idempotence + repair
+  (cu126/cu128), state file for idempotence + repair; extra_pins repair
+  upstream drift as data (numpy<2, bitsandbytes==0.49.2 — decision 19)
 - `jobs/` — transport-free async job runner: FIFO queue (one job at a time),
   explicit state machine (queued→preparing→running→terminal, oom_stepdown
   loops back), per-job event streams ending in a terminal event, job.json
-  record + job.log in each job's workdir, psutil process-tree cancellation.
+  record + job.log in each job's workdir, psutil process-tree cancellation,
+  submit preflight (refuse before a job exists), stale-record sweep at
+  startup, carriage-return splitting for live tqdm steps/ETA. Spill guard:
+  median s/step of steps 3–10 over the preset ceiling → same ladder as OOM,
+  message names the real cause (decision 20).
   `jobs/stepdown.py` — OOM ladder: blocks_to_swap (18→34) → gradient
-  checkpointing (if off) → resolution notch (1024→768→512) → halve batch;
-  max 2 retries, human-worded failures.
+  checkpointing (if off) → cache text-encoder outputs (sdxl; decision 21) →
+  resolution notch (1024→768→512) → halve batch; max 2 retries,
+  human-worded failures.
 - `downloader.py` — snapshot_download into the shared HF cache (ComfyUI
   reuse), model/asset sources as `source:` blocks in matrix.yaml, disk
   preflight, gated-401 message with license URL + `hf auth login` step
@@ -159,11 +174,19 @@ Done and tested (18 tests, ruff clean, CI on Ubuntu+Windows):
   by FastAPI at / (ServerDeps.ui_dist); `npm run dev` (5173) hits the API
   cross-origin (CORS grants loopback origins only). Pure logic lives in
   jobView.ts/recipe.ts with vitest tests. CI has a frontend job.
+- `desktop/` — Tauri v2 shell, stages 1+2: sidecar crate owning the server
+  lifecycle (spawn, LORAFORGE_READY handshake per decision 18, ordered
+  shutdown via /control/shutdown, 25s wait then process-group/Job-Object
+  kill), window→UI wiring, close-during-run confirmation dialog,
+  single-instance focus, occupied-port fallback, desktop CI job. Real GPU
+  training reached end-to-end 2026-07-19. Packaged-install/first-run
+  bootstrap UX (stage B) NOT started.
 
 ## Roadmap (in order — don't skip ahead)
 
-1. **Tauri shell** — wrap the web UI in the desktop shell; installer story
-   (bundle uv, first-run engine setup flow).
+1. **Tauri shell stage B** — packaged install: installer story (bundle uv,
+   first-run engine setup flow); walk the acceptance checklist in
+   docs/design/tauri-shell.md.
 2. **Captioner engine** — Florence-2 / WD14 adapters implementing
    datasets/captioner.Captioner, bootstrapped like training engines; then
    wire preview sample images into the training filmstrip.
