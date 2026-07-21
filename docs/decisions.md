@@ -155,7 +155,11 @@ message a non-expert can act on ("resolution must be a multiple of 64",
 "'flux_dev' needs component files not yet downloaded — run the model
 download step first"). The engine must never discover a config problem at
 step 40. Tests pin the actionable words in error messages, not just the
-error types.
+error types. Validation is two-tier by design: /recipes/validate answers 'is
+this a well-formed recipe' from the schema alone, while submit answers 'can
+this run here and now' with a dry compile() against engine and environment
+truth — model-support and asset checks belong to the second tier, and both
+tiers speak in the same human-worded messages.
 
 ## 16. Desktop shell is a dumb orchestrator; the webview points at the local server
 
