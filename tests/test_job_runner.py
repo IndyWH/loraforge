@@ -189,16 +189,17 @@ def test_oom_retries_exhausted_fails_in_human_words(tmp_path: Path) -> None:
         oom = ["CUDA out of memory\n"]
         spawner = FakeSpawner(FakeProcess(oom), FakeProcess(oom), FakeProcess(oom))
         runner = JobRunner(adapter, tmp_path, spawn=spawner, max_retries=2)
-        job = await runner.submit(make_recipe(tmp_path))  # sdxl: resolution notches
+        job = await runner.submit(make_recipe(tmp_path))  # sdxl: TE cache, then notches
         events = await asyncio.wait_for(drain(runner, job.id), timeout=5)
         await runner.close()
 
         assert job.state is JobState.FAILED
         assert states(events).count("oom_stepdown") == 2
-        assert [r["dataset"]["resolution"] for r in [job.recipe.model_dump(mode="json")]] == [512]
+        assert job.recipe.train.cache_text_encoder_outputs is True  # rung 1 (decision 21)
+        assert job.recipe.dataset.resolution == 768  # rung 2
         # the failure explains everything that was tried, in plain language
         assert "out of memory" in job.error
-        assert "1024 to 768" in job.error and "768 to 512" in job.error
+        assert "text descriptions" in job.error and "1024 to 768" in job.error
         assert "Close other applications" in job.error
         assert record_of(runner, job.id)["error"] == job.error
 
@@ -210,7 +211,14 @@ def test_oom_with_nothing_left_to_try_fails_immediately(tmp_path: Path) -> None:
         adapter = FakeAdapter()
         spawner = FakeSpawner(FakeProcess(["CUDA out of memory\n"]))
         runner = JobRunner(adapter, tmp_path, spawn=spawner)
-        recipe = make_recipe(tmp_path, **{"dataset.resolution": 512, "train.batch_size": 1})
+        recipe = make_recipe(
+            tmp_path,
+            **{
+                "dataset.resolution": 512,
+                "train.batch_size": 1,
+                "train.cache_text_encoder_outputs": True,  # every sdxl rung already used
+            },
+        )
         job = await runner.submit(recipe)
         await asyncio.wait_for(drain(runner, job.id), timeout=5)
         await runner.close()
@@ -374,7 +382,8 @@ def test_ladder_full_order_flux(tmp_path: Path) -> None:
 
 
 def test_ladder_full_order_sdxl(tmp_path: Path) -> None:
-    # no block swap for sdxl: checkpointing → resolution x2 → halve batch x2 → exhausted
+    # no block swap for sdxl:
+    # checkpointing → TE cache → resolution x2 → halve batch x2 → exhausted
     recipe = make_recipe(
         tmp_path, **{"train.gradient_checkpointing": False, "train.batch_size": 4}
     )
@@ -382,15 +391,31 @@ def test_ladder_full_order_sdxl(tmp_path: Path) -> None:
     assert one.recipe.train.gradient_checkpointing is True
     assert one.recipe.dataset.resolution == 1024  # quality untouched by the speed-only rung
     assert one.recipe.train.blocks_to_swap == 0
-    two = step_down(one.recipe)
-    assert two.recipe.dataset.resolution == 768
+    two = step_down(one.recipe)  # TE cache before any resolution loss (decision 21)
+    assert two.recipe.train.cache_text_encoder_outputs is True
+    assert two.recipe.dataset.resolution == 1024
+    assert "trigger word" in two.message  # honest about the trade, in human words
     three = step_down(two.recipe)
-    assert three.recipe.dataset.resolution == 512
-    four = step_down(three.recipe)  # notches exhausted → halve batch
-    assert four.recipe.train.batch_size == 2
-    five = step_down(four.recipe)
-    assert five.recipe.train.batch_size == 1
-    assert step_down(five.recipe) is None  # ladder exhausted
+    assert three.recipe.dataset.resolution == 768
+    four = step_down(three.recipe)
+    assert four.recipe.dataset.resolution == 512
+    five = step_down(four.recipe)  # notches exhausted → halve batch
+    assert five.recipe.train.batch_size == 2
+    six = step_down(five.recipe)
+    assert six.recipe.train.batch_size == 1
+    assert step_down(six.recipe) is None  # ladder exhausted
+
+
+def test_ladder_te_cache_rung_skips_unsupported_models(tmp_path: Path) -> None:
+    # flux stays off the TE-cache rung until a measured run (decision 21):
+    # after checkpointing, it must go straight to the resolution notch.
+    recipe = make_recipe(
+        tmp_path,
+        **{"model": "flux_dev", "train.blocks_to_swap": 34},
+    )
+    stepped = step_down(recipe)  # swap + checkpointing exhausted (both already on)
+    assert stepped.recipe.dataset.resolution == 768
+    assert stepped.recipe.train.cache_text_encoder_outputs is False
 
 
 def test_ladder_block_swap_respects_batch_size_rule(tmp_path: Path) -> None:

@@ -43,14 +43,19 @@ models:
         min_free_vram_mb: 14000
         settings: {resolution: 1024, batch_size: 4, gradient_checkpointing: true,
                    max_seconds_per_step: 30}
+      # standard: 10.4GB measured appetite × ~10% headroom ≈ 11.4GB free.
+      # A 3060 12GB typically clears this; record a real 3060 run when one exists.
       - name: standard
-        min_free_vram_mb: 11500
+        min_free_vram_mb: 11400
         settings: {resolution: 1024, batch_size: 2, gradient_checkpointing: true,
                    max_seconds_per_step: 25}
+      # tight: text-encoder cache frees ~1.6GB (estimated landing ~7.3GB) at
+      # the cost of unet-only training (decision 21). The 7000 threshold stays
+      # until a measured run confirms the estimate (decision 20).
       - name: tight
         min_free_vram_mb: 7000
         settings: {resolution: 768, batch_size: 1, gradient_checkpointing: true,
-                   max_seconds_per_step: 20}
+                   cache_text_encoder_outputs: true, max_seconds_per_step: 20}
     not_available_reason: "SDXL LoRA needs ~7GB free VRAM even at 768px."
 
   flux_dev:

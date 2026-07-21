@@ -212,3 +212,19 @@ generous max_seconds_per_step ceiling as matrix data (spill is ~40x, not
 ~20% — ceilings sit far above any healthy card), the runner takes the
 median of steps 3–10 (warmup excluded), and a breach feeds the same
 step-down ladder as a pseudo-OOM with a message naming the real cause.
+
+## 21. Text-encoder outputs cache to disk on the tight path; unet-only is the trade
+
+Decision 9 promised cached text embeddings; kohya delivers it via
+--cache_text_encoder_outputs_to_disk, which frees ~1.6GB but forces
+unet-only training (cached embeddings cannot backprop a text-encoder LoRA)
+and requires caption shuffling/dropout off (shuffle is already off). Because
+it changes what gets trained, it is preset/recipe data, never a global
+default: SDXL tight enables it — an 8GB card cares more about fitting than
+text-encoder finetuning, and trigger words still work through
+cross-attention — while comfortable/standard keep text-encoder training. It
+is also a new rung on the OOM step-down ladder, between gradient
+checkpointing and the resolution notch, matching decision 10's
+cheapest-visible-cost ordering. The three kohya flags travel together in
+compile(); thresholds move only after a measured run per decision 20. FLUX
+presets likely want the same treatment (t5xxl) — unmeasured, later.

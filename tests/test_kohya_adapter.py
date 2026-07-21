@@ -40,6 +40,37 @@ def test_compile_produces_expected_argv(adapter: KohyaAdapter, tmp_path: Path) -
     # low-VRAM flags absent when the recipe doesn't ask for them
     assert "--fp8_base" not in argv
     assert "--blocks_to_swap" not in argv
+    assert "--cache_text_encoder_outputs" not in argv
+    assert "--network_train_unet_only" not in argv
+
+
+def test_compile_te_cache_flags_travel_together(adapter: KohyaAdapter, tmp_path: Path) -> None:
+    # Cached embeddings can't backprop a text-encoder LoRA: the two cache flags
+    # and unet-only must appear together or not at all (decision 21).
+    recipe = Recipe.from_yaml(RECIPE_PATH).with_overrides(
+        {"train.cache_text_encoder_outputs": True}
+    )
+    argv = adapter.compile(recipe, tmp_path).argv
+    assert "--cache_text_encoder_outputs" in argv
+    assert "--cache_text_encoder_outputs_to_disk" in argv
+    assert "--network_train_unet_only" in argv
+
+
+def test_compile_te_cache_rejected_for_unsupported_model(tmp_path: Path) -> None:
+    # sd15's train_network.py has no --cache_text_encoder_outputs: compile must
+    # refuse with a human reason, not let kohya crash at startup (rule 5).
+    model = tmp_path / "sd15.safetensors"
+    model.write_bytes(b"")
+    adapter = KohyaAdapter(
+        sd_scripts_dir=tmp_path / "sd-scripts",
+        env_dir=tmp_path / "env",
+        model_paths={"sd15": model},
+    )
+    recipe = Recipe.from_yaml(RECIPE_PATH).with_overrides(
+        {"model": "sd15", "train.cache_text_encoder_outputs": True}
+    )
+    with pytest.raises(ValueError, match="cache_text_encoder_outputs"):
+        adapter.compile(recipe, tmp_path)
 
 
 def test_compile_renders_dataset_toml(adapter: KohyaAdapter, tmp_path: Path) -> None:

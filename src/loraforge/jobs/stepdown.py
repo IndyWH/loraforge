@@ -7,9 +7,12 @@ recipe. One rung per OOM event, in this order:
    big VRAM win, costs only speed, never quality;
 2. enable gradient checkpointing, if it is off: also costs only speed, so it
    must come before anything visible in results;
-3. drop resolution one notch (1024 → 768 → 512): visible in results, so it
-   comes after every speed-only lever;
-4. halve the batch size: last, because presets already run tight batches and
+3. cache text-encoder outputs to disk, where the engine supports it: frees
+   ~1.6GB but forces unet-only training — a real trade, yet less visible than
+   lower resolution (trigger words still work through cross-attention);
+4. drop resolution one notch (1024 → 768 → 512): visible in results, so it
+   comes after every cheaper lever;
+5. halve the batch size: last, because presets already run tight batches and
    halving 1 is impossible.
 
 Every rung returns a *validated* recipe (``with_overrides`` re-runs pydantic)
@@ -30,6 +33,10 @@ if TYPE_CHECKING:
 # Models whose kohya script accepts --blocks_to_swap (data, not code paths).
 SUPPORTS_BLOCK_SWAP = frozenset({"flux_dev"})
 
+# Models whose script supports --cache_text_encoder_outputs (decision 21).
+# sd15's train_network.py lacks the flag; flux waits for a measured run.
+SUPPORTS_TEXT_ENCODER_CACHE = frozenset({"sdxl"})
+
 _BLOCK_SWAP_RUNGS = (18, 34)
 _RESOLUTION_NOTCHES = (1024, 768, 512)  # drop to the next notch below current
 
@@ -47,6 +54,7 @@ def vram_knobs(recipe: Recipe) -> dict[str, Any]:
         "batch_size": recipe.train.batch_size,
         "blocks_to_swap": recipe.train.blocks_to_swap,
         "gradient_checkpointing": recipe.train.gradient_checkpointing,
+        "cache_text_encoder_outputs": recipe.train.cache_text_encoder_outputs,
     }
 
 
@@ -72,6 +80,14 @@ def step_down(recipe: Recipe) -> StepDown | None:
             recipe.with_overrides({"train.gradient_checkpointing": True}),
             "Turning on gradient checkpointing "
             "(slower steps, much less VRAM, identical results).",
+        )
+
+    if recipe.model in SUPPORTS_TEXT_ENCODER_CACHE and not train.cache_text_encoder_outputs:
+        return StepDown(
+            recipe.with_overrides({"train.cache_text_encoder_outputs": True}),
+            "Caching text descriptions to disk and training only the image side "
+            "(frees about 1.6GB of VRAM; your trigger word still works, but the "
+            "text encoder is no longer fine-tuned).",
         )
 
     notch = next((n for n in _RESOLUTION_NOTCHES if n < dataset.resolution), None)

@@ -25,6 +25,7 @@ const TRAIN_KEYS = [
   "fp8_base",
   "blocks_to_swap",
   "max_seconds_per_step", // spill guard: matrix data the runner enforces
+  "cache_text_encoder_outputs", // tight-preset rescue: unet-only trade (decision 21)
 ];
 
 export function buildRecipe(

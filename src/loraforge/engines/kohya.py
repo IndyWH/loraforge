@@ -35,11 +35,16 @@ class ModelSpec:
     # HF-hub component assets some scripts need on top of the base checkpoint
     # (filled in by the model downloader): name → CLI flag.
     required_assets: dict[str, str] | None = None
+    # Whether the script accepts --cache_text_encoder_outputs (decision 21).
+    # sd15's train_network.py does not; flux stays off until measured.
+    supports_te_cache: bool = False
 
 
 MODEL_SPECS: dict[str, ModelSpec] = {
     "sd15": ModelSpec(script="train_network.py", network_module="networks.lora"),
-    "sdxl": ModelSpec(script="sdxl_train_network.py", network_module="networks.lora"),
+    "sdxl": ModelSpec(
+        script="sdxl_train_network.py", network_module="networks.lora", supports_te_cache=True
+    ),
     "flux_dev": ModelSpec(
         script="flux_train_network.py",
         network_module="networks.lora_flux",
@@ -193,6 +198,20 @@ class KohyaAdapter:
             argv.append("--gradient_checkpointing")
         if recipe.dataset.cache_latents:
             argv += ["--cache_latents", "--cache_latents_to_disk"]
+        if recipe.train.cache_text_encoder_outputs:
+            if not spec.supports_te_cache:
+                raise ValueError(
+                    f"'{recipe.model}' does not support caching text-encoder outputs — "
+                    "turn off train.cache_text_encoder_outputs for this model"
+                )
+            # Cached embeddings cannot backprop a text-encoder LoRA, so unet-only
+            # must travel with the cache flags — never let these three drift apart
+            # (decision 21).
+            argv += [
+                "--cache_text_encoder_outputs",
+                "--cache_text_encoder_outputs_to_disk",
+                "--network_train_unet_only",
+            ]
         if recipe.train.fp8_base:
             argv.append("--fp8_base")
         if recipe.train.blocks_to_swap > 0:

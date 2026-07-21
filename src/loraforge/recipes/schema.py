@@ -69,6 +69,11 @@ class TrainSection(BaseModel):
     mixed_precision: Literal["bf16", "fp16"] = "bf16"
     fp8_base: bool = False  # resolver flips this on for Ada/Blackwell presets
     blocks_to_swap: int = Field(0, ge=0, le=57, description="kohya block swap (VRAM↓, RAM↑)")
+    cache_text_encoder_outputs: bool = Field(
+        False,
+        description="Cache text-encoder outputs to disk (~1.6GB VRAM freed); "
+        "forces unet-only training — the text encoder is not fine-tuned",
+    )
     seed: int = 42
     save_every_steps: int = Field(
         200, ge=0, description="Intermediate checkpoint cadence; powers stop-and-keep. 0 disables"

@@ -8,7 +8,12 @@ const sdxlPreset: ModelCapability = {
   display_name: "Stable Diffusion XL",
   status: "available",
   preset_name: "tight",
-  settings: { resolution: 768, batch_size: 1, gradient_checkpointing: true },
+  settings: {
+    resolution: 768,
+    batch_size: 1,
+    gradient_checkpointing: true,
+    cache_text_encoder_outputs: true,
+  },
   min_free_vram_mb: 7000,
   reason: null,
 };
@@ -18,7 +23,12 @@ describe("buildRecipe", () => {
     const doc = buildRecipe("my-lora", sdxlPreset, "/data/cats", "sks-cat", defaultKnobs, "");
     expect(doc.model).toBe("sdxl");
     expect(doc.dataset).toMatchObject({ path: "/data/cats", resolution: 768, trigger_word: "sks-cat" });
-    expect(doc.train).toMatchObject({ batch_size: 1, gradient_checkpointing: true, max_steps: 1500 });
+    expect(doc.train).toMatchObject({
+      batch_size: 1,
+      gradient_checkpointing: true,
+      cache_text_encoder_outputs: true, // the tight-preset rescue rides along (decision 21)
+      max_steps: 1500,
+    });
     expect(doc.peft).toEqual({ rank: 16, alpha: 16 });
   });
 
